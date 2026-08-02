@@ -15,7 +15,7 @@
 > 7. 術語表修正:ミツル 官方譯名 = **滿充**(「小勝」是劍盾主角マサル,完全不同角色);主角 ハルカ=小遙、ユウキ=小悠。
 > 8. Phase Verification 第一項應回**簡體中文**(含術語表繁體詞條),繁化由 PT 顯示端負責;`uv run pytest -q` 已全綠(25);**LAN 端到端延遲留待 Mac 實機部署時量測**(照 server/README.md §6)。
 >
-> 尚待使用者在 Mac 執行:模型 pull + `ollama create` + 代理啟動 + Thor 端 PT 設定(全部指令在 server/README.md)。
+> **2026-08-02 部署完成:使用者已完成 server 部署與 Thor 端 PT 設定(OpenAI → Custom → 代理 URL),實機端到端確認可用 → Phase 02 正式關閉。**量化延遲(p50/p95)可隨時以 `uv run python tools/quality_check.py --endpoint http://<server-ip>:8000/v1` 補測,亦可留待 Phase 05 驗收一併量。
 
 > **⚠ 2026-08-02 修正前言(依 Phase 01 結果,優先於下方原文)**:
 >
