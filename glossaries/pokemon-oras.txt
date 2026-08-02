@@ -1,0 +1,33 @@
+# Pokémon ORAS (Hoenn) per-game glossary — GalTransl gpt_dict format.
+# One entry per line: <Japanese term>-><official Taiwan name> [ #note]
+# Lines starting with '#' or '//' are comments. Notes are model-facing hints,
+# written in Simplified Chinese to match the model's training data; targets
+# stay Traditional (official TW names) and pass through PT's s2tw unchanged.
+# All names verified against 52poke wiki (zh-hant) on 2026-08-02.
+ポケモン->寶可夢
+モンスターボール->精靈球 #道具
+ジムリーダー->道館館主 #称号
+ホウエン->豐緣 #地方名
+ミシロタウン->未白鎮 #地名
+トウカシティ->橙華市 #地名
+オダマキ->小田卷 #人名，博士
+ハルカ->小遙 #人名，女主角
+ユウキ->小悠 #人名，男主角
+ダイゴ->大吾 #人名，男性，联盟冠军
+ツワブキ->茲伏奇 #姓氏，大吾的家族
+ミツル->滿充 #人名，男孩，劲敌
+ミクリ->米可利 #人名，道馆馆主
+センリ->千里 #人名，主角的爸爸，道馆馆主
+ヒガナ->希嘉娜 #人名，女性
+エニシダ->亞希達 #人名，对战开拓区所有人
+アオギリ->水梧桐 #人名，海洋队首领
+マツブサ->赤焰松 #人名，熔岩队首领
+マグマ団->熔岩隊 #组织名
+アクア団->海洋隊 #组织名
+デボンコーポレーション->得文公司 #组织名
+ポケモンリーグ->寶可夢聯盟 #组织名
+メガシンカ->超級進化 #游戏系统
+ゲンシカイキ->原始回歸 #游戏系统
+グラードン->固拉多 #传说宝可梦
+カイオーガ->蓋歐卡 #传说宝可梦
+レックウザ->烈空坐 #传说宝可梦

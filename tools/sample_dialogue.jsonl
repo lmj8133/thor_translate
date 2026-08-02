@@ -1,0 +1,10 @@
+{"id": 1, "ja": "ここが　ミシロタウン。　きみの　あたらしい　いえが　ある　まちだよ。", "tags": ["place-name"], "note": "Town name Mishiro Town (未白鎮) — glossary hit expected"}
+{"id": 2, "ja": "はじめまして！　わたしは　オダマキ。　ポケモンの　ことを　しらべている　ポケモン　はかせだ。", "tags": ["person-name", "term"], "note": "Prof. Odamaki + repeated ポケモン — glossary hits expected"}
+{"id": 3, "ja": "ダイゴさんは　どこに　いるか　しっていますか？", "tags": ["person-name", "consistency-1"], "note": "Daigo (Steven) 1st occurrence — name consistency check"}
+{"id": 4, "ja": "ダイゴさんなら　さっき　トウカシティの　ほうへ　あるいて　いきましたよ。", "tags": ["person-name", "place-name", "consistency-2"], "note": "Daigo 2nd occurrence + Touka City — same rendering as id 3 expected"}
+{"id": 5, "ja": "ダイゴ「この　いしは　ぼくに　とって　とても　たいせつな　ものなんだ。", "tags": ["person-name", "consistency-3", "speaker-prefix"], "note": "Daigo 3rd occurrence, speaker-prefix style line"}
+{"id": 6, "ja": "ミツル「ぼく…　もっと　つよく　なりたいんだ。　ポケモンと　いっしょに！", "tags": ["person-name", "term"], "note": "Mitsuru (Wally) + ポケモン — glossary hits expected"}
+{"id": 7, "ja": "でんせつの　ポケモン　グラードンが　めざめたら　この　せかいは　どう　なって　しまうんだ！", "tags": ["pokemon-name", "term"], "note": "Legendary Groudon — glossary hit expected"}
+{"id": 8, "ja": "つぎの　ジムリーダーは　でんきタイプの　つかいて。　きを　つけて　いくんだよ。", "tags": ["term"], "note": "ジムリーダー gym leader — glossary hit expected"}
+{"id": 9, "ja": "むかしから　この　ちほうに　つたわる　でんせつが　ある。\nそれは　だいちと　うみを　めぐる　ふたつの　ポケモンの　ものがたり。", "tags": ["scroll-pair-a"], "note": "Scroll sample A: two-line box, lines 1+2 (Phase 04 reference)"}
+{"id": 10, "ja": "それは　だいちと　うみを　めぐる　ふたつの　ポケモンの　ものがたり。\nひとびとは　その　ちからを　おそれ　うやまって　きたのだ。", "tags": ["scroll-pair-b"], "note": "Scroll sample B: line 2 scrolled up + new line 3 — overlaps id 9 by one line"}
