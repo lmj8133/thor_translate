@@ -8,7 +8,7 @@ Thor (PlayTranslate, Custom URL)
       → http://localhost:11434/v1   Ollama（Sakura-GalTransl-7B-v3.7）
 ```
 
-代理的職責：把 PlayTranslate 的請求整段改寫成 Sakura-GalTransl v3.7 官方 prompt 格式，掃描原文、只注入命中的 per-game 術語（gpt_dict 格式），轉發給 Ollama。**輸出維持簡體中文**——PlayTranslate 顯示時自行轉台灣正體（opencc4j s2tw + 台灣詞彙）。
+代理的職責：把 PlayTranslate 的請求整段改寫成 Sakura-GalTransl v3.7 官方 prompt 格式，掃描原文、只注入命中的 per-game 術語（gpt_dict 格式），轉發給 Ollama。模型的簡中輸出在**代理出口直接轉台灣正體**（OpenCC `s2twp`，含台灣用語），不依賴 PT 端的顯示轉換設定；PT 回傳的前文 context 則以 `tw2sp` 正規化回簡體再餵給模型。
 
 模型授權：CC BY-NC-SA（禁商用，個人使用無虞）。
 
@@ -79,7 +79,7 @@ curl -s http://<mac-ip>:8000/v1/chat/completions \
   -d '{"model":"any","messages":[{"role":"user","content":"ダイゴさんは　どこに　いますか？"}]}'
 ```
 
-第二條應回含「大吾」的簡體譯文（術語注入生效；繁體轉換在 PT 端）。
+第二條應回含「大吾」的**台灣正體**譯文（術語注入與 s2twp 出口轉換皆生效）。
 
 ## 4. Thor 端 PlayTranslate 設定
 
@@ -88,7 +88,7 @@ Settings → Translation services → Add Online Translation Service → **OpenA
 - **Custom URL**：`http://<mac-ip>:8000/v1`（http 連私網 IP 為 PT 白名單允許）
 - **API key**：任意非空字串（如 `thor`；代理只檢查非空，非真正驗證）
 - **Model**：任意（代理一律改用 `OLLAMA_MODEL`）
-- 目標語言：**Chinese (Traditional, Taiwan)**（zh-Hant-TW）
+- 目標語言：**Chinese (Traditional, Taiwan)**（zh-Hant-TW）——代理輸出已是台灣正體（PT 再轉一次是恆等操作），但此設定讓瀑布備援的內建引擎也能正確轉繁
 - Advanced LLM configuration → **開啟 context**（預設關閉）→ 前文會轉成 Sakura 的「历史翻译」，提升人稱與譯名連貫性
 - System prompt / 翻譯 prompt **維持預設即可**（代理會整段改寫成 Sakura 官方格式；PT 的 system prompt 會被忽略）
 
@@ -116,5 +116,5 @@ uv run python tools/quality_check.py --endpoint http://<mac-ip>:8000/v1
 | 502 `Upstream ... returned 404` | 模型名不存在——對照 `ollama ls` 與 `OLLAMA_MODEL` |
 | 譯文尾端被截斷、或前文彷彿失憶 | num_ctx 不足（Ollama server log 會有 truncation 警告）→ 加大 Modelfile 的 `num_ctx` 重新 `ollama create` |
 | 第一句特別慢、之後正常 | 模型冷載入。代理啟動時會預熱＋釘住；若 Ollama 重啟過，重啟代理 |
-| PT 畫面顯示簡體 | 目標語言選到 Chinese (Simplified)——改選 Chinese (Traditional, Taiwan) |
+| PT 畫面顯示簡體 | 代理是未含 OpenCC 出口轉換的舊版（`uv sync` 後重啟）；或該句走了 PT 內建備援引擎且目標語言選成 Chinese (Simplified) |
 | 專有名詞仍不穩 | 該詞不在術語表——加進 `GLOSSARY_PATH` 檔案存檔即生效 |

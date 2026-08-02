@@ -3,9 +3,10 @@
 PlayTranslate (or any OpenAI-format client) talks to this proxy; the proxy
 rewrites each request into the official Sakura-GalTransl v3.7 prompt format,
 injecting only the per-game glossary terms that actually occur in the source
-text, then forwards to Ollama's OpenAI-compatible endpoint. Output stays
-Simplified Chinese by design — PlayTranslate converts to Traditional (Taiwan)
-at render time.
+text, then forwards to Ollama's OpenAI-compatible endpoint. The model's
+Simplified output is converted to Taiwan Traditional (OpenCC s2twp) at the
+proxy's output boundary, so the result is correct regardless of PlayTranslate's
+own render-time conversion setting.
 
 Environment:
     UPSTREAM_URL   Ollama base URL (default http://localhost:11434)
@@ -31,11 +32,21 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from opencc import OpenCC
 
 from . import sakura
 from .glossary import Glossary
 
 logger = logging.getLogger("proxy")
+
+# Output boundary: the model emits Simplified; convert to Taiwan Traditional
+# with TW vocabulary (s2twp) so correctness does not depend on PlayTranslate's
+# render-time conversion setting (its variant pref fail-safes to Simplified).
+# PT re-converting already-Traditional text is an identity operation.
+_s2twp = OpenCC("s2twp")
+# Input boundary: PT sends our Traditional output back as context; the model
+# is trained on Simplified, so history is normalized back with tw2sp.
+_tw2sp = OpenCC("tw2sp")
 
 UPSTREAM_URL = os.environ.get("UPSTREAM_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "sakura-galtransl-v3.7")
@@ -131,7 +142,7 @@ async def chat_completions(request: Request) -> JSONResponse:
         return _error(400, "No user message with string content in request")
 
     context_pairs, payload = sakura.split_pt_user_message(user_content)
-    history = [translation for _, translation in context_pairs]
+    history = [_tw2sp.convert(translation) for _, translation in context_pairs]
 
     # PlayTranslate marks its batch path (several OCR regions in one request)
     # by attaching response_format; single requests never carry it.
@@ -187,10 +198,12 @@ async def chat_completions(request: Request) -> JSONResponse:
                 f"Batch line count mismatch: sent {len(texts)} lines, model returned {len(lines)}",
             )
         data["choices"][0]["message"]["content"] = json.dumps(
-            {"translations": lines}, ensure_ascii=False
+            {"translations": [_s2twp.convert(line) for line in lines]}, ensure_ascii=False
         )
     else:
-        data["choices"][0]["message"]["content"] = sakura.unescape_line(content)
+        data["choices"][0]["message"]["content"] = _s2twp.convert(
+            sakura.unescape_line(content)
+        )
 
     # Unchanged fields (usage, id, ...) pass through — PT feeds its token
     # meter from usage.

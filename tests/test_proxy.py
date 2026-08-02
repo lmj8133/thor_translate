@@ -110,7 +110,8 @@ async def test_glossary_hit_injected(client, upstream, glossary_file):
     assert upstream.payload["model"] == main.OLLAMA_MODEL
     assert upstream.payload["temperature"] == sakura.SAMPLING["temperature"]
     data = resp.json()
-    assert data["choices"][0]["message"]["content"] == "大吾先生在哪里？"
+    # Simplified 哪里 from the model comes back as Taiwan Traditional 哪裡.
+    assert data["choices"][0]["message"]["content"] == "大吾先生在哪裡？"
     assert data["usage"]["completion_tokens"] == 5  # usage passes through
 
 
@@ -128,6 +129,26 @@ async def test_missing_glossary_file_raises():
     with pytest.raises(GlossaryError) as excinfo:
         Glossary(missing)
     assert str(missing) in str(excinfo.value)
+
+
+async def test_output_converted_to_taiwan_traditional(client, upstream, glossary_file):
+    # s2twp is phrase-level TW localization, not just glyphs: 软件 → 軟體.
+    upstream.content = "这个软件不能用了"
+    resp = await client.post("/v1/chat/completions", json=pt_request("このソフトはもう使えない"))
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "這個軟體不能用了"
+
+
+async def test_history_normalized_back_to_simplified(client, upstream, glossary_file):
+    # PT echoes our Traditional output as context; the model is trained on
+    # Simplified, so the 历史翻译 block must be normalized with tw2sp.
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request("つづき", context=[("ソフトのはなし", "這個軟體不能用了")]),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.startswith("历史翻译：这个软件不能用了\n")
 
 
 async def test_context_becomes_history(client, upstream, glossary_file):

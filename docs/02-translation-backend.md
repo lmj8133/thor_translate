@@ -16,6 +16,8 @@
 > 8. Phase Verification 第一項應回**簡體中文**(含術語表繁體詞條),繁化由 PT 顯示端負責;`uv run pytest -q` 已全綠(25);**LAN 端到端延遲留待 Mac 實機部署時量測**(照 server/README.md §6)。
 >
 > **2026-08-02 部署完成:使用者已完成 server 部署與 Thor 端 PT 設定(OpenAI → Custom → 代理 URL),實機端到端確認可用 → Phase 02 正式關閉。**量化延遲(p50/p95)可隨時以 `uv run python tools/quality_check.py --endpoint http://<server-ip>:8000/v1` 補測,亦可留待 Phase 05 驗收一併量。
+>
+> **2026-08-02 品質修正(部署後)**:實機出現簡體漏轉(「哪里」)。根因:PT 的簡繁轉換取決於 `targetChineseVariant` 偏好,且該偏好 fail-safe 到 Simplified(變體選錯/重置即整段不轉)。修正:**OpenCC 回歸代理**——出口 `s2twp`(簡→台灣正體+台灣用語)、context 入口 `tw2sp`(PT 回傳的繁體前文正規化回簡體再進模型);自此不依賴 PT 端設定(PT 對已繁化文本再轉為恆等)。測試 27 綠。「生硬不自然」問題待此修正上線後重新評估,再決定雲端模型 vs Sakura-14B(候補方向,連同「假名為主文本對 Sakura 屬域外資料」的分析,見對話紀錄)。
 
 > **⚠ 2026-08-02 修正前言(依 Phase 01 結果,優先於下方原文)**:
 >
