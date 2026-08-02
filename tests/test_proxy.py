@@ -144,7 +144,7 @@ async def test_history_normalized_back_to_simplified(client, upstream, glossary_
     # Simplified, so the 历史翻译 block must be normalized with tw2sp.
     resp = await client.post(
         "/v1/chat/completions",
-        json=pt_request("つづき", context=[("ソフトのはなし", "這個軟體不能用了")]),
+        json=pt_request("つづき", context=[("ソフトのはなし。", "這個軟體不能用了")]),
     )
     assert resp.status_code == 200
     prompt = upstream.payload["messages"][1]["content"]
@@ -154,13 +154,65 @@ async def test_history_normalized_back_to_simplified(client, upstream, glossary_
 async def test_context_becomes_history(client, upstream, glossary_file):
     resp = await client.post(
         "/v1/chat/completions",
-        json=pt_request("ダイゴさんは　どこ？", context=[("こんにちは", "你好"), ("行くぞ", "走吧")]),
+        json=pt_request("ダイゴさんは　どこ？", context=[("こんにちは！", "你好"), ("行くぞ！", "走吧")]),
     )
     assert resp.status_code == 200
     prompt = upstream.payload["messages"][1]["content"]
     assert prompt.startswith("历史翻译：你好\n走吧\n")
     assert "Recent dialogue lines" not in prompt
     assert prompt.endswith("将下面的文本从日文翻译成简体中文：\nダイゴさんは　どこ？")
+
+
+async def test_incomplete_previous_box_joins_input(client, upstream, glossary_file):
+    # The previous box ends mid-sentence (no sentence-final punctuation), so
+    # its source joins the input and its translation leaves the history.
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request(
+            "きみを　むかえに　きたんだ！",
+            context=[("ダイゴさんに　たのまれて", "被大吾先生拜託")],
+        ),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.endswith(
+        "将下面的文本从日文翻译成简体中文：\nダイゴさんに　たのまれてきみを　むかえに　きたんだ！"
+    )
+    assert "历史翻译" not in prompt
+    assert "ダイゴ->大吾 #人名" in prompt  # glossary matches over the joined text
+
+
+async def test_continuation_chain_keeps_older_history(client, upstream, glossary_file):
+    # Two trailing incomplete boxes join; the older finished pair stays as history.
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request(
+            "きたんだ！",
+            context=[
+                ("こんにちは！", "你好"),
+                ("ダイゴさんに　たのまれて", "被大吾先生拜託"),
+                ("きみを　むかえに", "來迎接你"),
+            ],
+        ),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.startswith("历史翻译：你好\n")
+    assert prompt.endswith(
+        "将下面的文本从日文翻译成简体中文：\nダイゴさんに　たのまれてきみを　むかえにきたんだ！"
+    )
+
+
+async def test_continuation_join_can_be_disabled(client, upstream, glossary_file, monkeypatch):
+    monkeypatch.setattr(main, "CONTINUATION_JOIN", False)
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request("きたんだ！", context=[("たのまれて", "被拜託")]),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.startswith("历史翻译：被拜托\n")
+    assert prompt.endswith("将下面的文本从日文翻译成简体中文：\nきたんだ！")
 
 
 async def test_custom_minimal_template_passthrough(client, upstream, glossary_file):
@@ -191,7 +243,7 @@ async def test_ambiguous_context_pair_dropped(client, upstream, glossary_file):
     content = (
         "Recent dialogue lines, for context only:\n"
         "- こうげき → ぼうぎょ → 攻击 → 防御\n"
-        "- こんにちは → 你好\n"
+        "- こんにちは！ → 你好\n"
         "\n"
         "Please translate the following Japanese text into Chinese:\n\nたたかう"
     )
@@ -295,6 +347,15 @@ async def test_batch_unparsable_payload_maps_to_400(client, upstream, glossary_f
     request["messages"][1]["content"] = "Translate each of these 1 strings:\nnot an array"
     resp = await client.post("/v1/chat/completions", json=request)
     assert resp.status_code == 400
+
+
+def test_is_sentence_complete_edges():
+    assert sakura.is_sentence_complete("いるよ！")
+    assert sakura.is_sentence_complete("ものがたり。")
+    assert sakura.is_sentence_complete("なに？　")  # trailing full-width space
+    assert sakura.is_sentence_complete("")
+    assert not sakura.is_sentence_complete("たのまれて")
+    assert not sakura.is_sentence_complete("それは、")
 
 
 async def test_models_requires_bearer_and_passes_through(client, monkeypatch):

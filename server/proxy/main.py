@@ -51,6 +51,10 @@ _tw2sp = OpenCC("tw2sp")
 UPSTREAM_URL = os.environ.get("UPSTREAM_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "sakura-galtransl-v3.7")
 GLOSSARY_PATH = os.environ.get("GLOSSARY_PATH", "")
+# Join a sentence split across dialogue boxes back together before
+# translating (see sakura.join_continuation). Set to "0" for games whose
+# text boxes routinely end without sentence-final punctuation.
+CONTINUATION_JOIN = os.environ.get("CONTINUATION_JOIN", "1") != "0"
 
 UPSTREAM_ERROR_EXCERPT = 300  # chars of upstream body carried into error messages
 MAX_COMPLETION_TOKENS = 4096
@@ -142,7 +146,6 @@ async def chat_completions(request: Request) -> JSONResponse:
         return _error(400, "No user message with string content in request")
 
     context_pairs, payload = sakura.split_pt_user_message(user_content)
-    history = [_tw2sp.convert(translation) for _, translation in context_pairs]
 
     # PlayTranslate marks its batch path (several OCR regions in one request)
     # by attaching response_format; single requests never carry it.
@@ -154,13 +157,22 @@ async def chat_completions(request: Request) -> JSONResponse:
             return _error(400, "Could not extract a JSON string array from batch request")
         input_text = "\n".join(sakura.escape_line(text) for text in texts)
         match_basis = "\n".join(texts)
+        history = [translation for _, translation in context_pairs]
     else:
         texts = None
+        # Batch regions are separate on-screen groups, so sentence joining
+        # applies only to the single-box path.
+        if CONTINUATION_JOIN:
+            raw_input, history = sakura.join_continuation(context_pairs, payload)
+        else:
+            raw_input = payload
+            history = [translation for _, translation in context_pairs]
         # Escape real newlines like the batch path: to Sakura, "\n" separates
         # independent texts, so an unescaped newline would split one dialogue
         # box into unrelated fragments.
-        input_text = sakura.escape_line(payload)
-        match_basis = payload
+        input_text = sakura.escape_line(raw_input)
+        match_basis = raw_input
+    history = [_tw2sp.convert(translation) for translation in history]
 
     entries = glossary.match(match_basis)
     upstream_body = {

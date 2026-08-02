@@ -81,6 +81,47 @@ def unescape_line(text: str) -> str:
     return text.replace("\\n", "\n")
 
 
+# Sentence-final characters: a box ending with one of these is a finished
+# sentence; anything else is treated as continuing into the next box.
+_COMPLETE_ENDINGS = tuple("。．｡!！?？…‥♪」』）)")
+
+
+def is_sentence_complete(text: str) -> bool:
+    """True when a dialogue-box text ends a sentence (or is empty)."""
+    stripped = text.rstrip()
+    return not stripped or stripped.endswith(_COMPLETE_ENDINGS)
+
+
+def join_continuation(
+    context_pairs: list[tuple[str, str]],
+    current: str,
+) -> tuple[str, list[str]]:
+    """Prepend unfinished previous box sources to the current text.
+
+    Japanese is verb-final, so the leading half of a sentence split across
+    dialogue boxes often carries no verb and translates badly in isolation.
+    Consecutive trailing context pairs whose SOURCE does not end a sentence
+    are treated as the current sentence's earlier boxes: their sources join
+    the input (so the model translates the whole sentence, displayed on the
+    current box) and their translations leave the history (the model would
+    otherwise treat that part as already translated).
+
+    Returns (joined input, remaining history translations). Trade-off: a
+    false positive re-displays the previous box's meaning on the current
+    box — mildly redundant, never wrong.
+    """
+    consumed = 0
+    for source, _ in reversed(context_pairs):
+        if is_sentence_complete(source):
+            break
+        consumed += 1
+    if not consumed:
+        return current, [translation for _, translation in context_pairs]
+    joined = "".join(source for source, _ in context_pairs[-consumed:]) + current
+    history = [translation for _, translation in context_pairs[:-consumed]]
+    return joined, history
+
+
 def build_user_prompt(
     entries: list[GlossaryEntry],
     history: list[str],

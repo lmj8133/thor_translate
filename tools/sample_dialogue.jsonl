@@ -8,3 +8,5 @@
 {"id": 8, "ja": "つぎの　ジムリーダーは　でんきタイプの　つかいて。　きを　つけて　いくんだよ。", "tags": ["term"], "note": "ジムリーダー gym leader — glossary hit expected"}
 {"id": 9, "ja": "むかしから　この　ちほうに　つたわる　でんせつが　ある。\nそれは　だいちと　うみを　めぐる　ふたつの　ポケモンの　ものがたり。", "tags": ["scroll-pair-a"], "note": "Scroll sample A: two-line box, lines 1+2 (Phase 04 reference)"}
 {"id": 10, "ja": "それは　だいちと　うみを　めぐる　ふたつの　ポケモンの　ものがたり。\nひとびとは　その　ちからを　おそれ　うやまって　きたのだ。", "tags": ["scroll-pair-b"], "note": "Scroll sample B: line 2 scrolled up + new line 3 — overlaps id 9 by one line"}
+{"id": 11, "ja": "オダマキはかせに　たのまれて", "tags": ["continuation-a"], "note": "Continuation sample A: box ends mid-sentence (no final punctuation)"}
+{"id": 12, "ja": "きみを　むかえに　きたんだ！", "tags": ["continuation-b"], "note": "Continuation sample B: completes id 11's sentence — proxy should join both boxes"}
