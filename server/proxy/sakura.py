@@ -90,6 +90,11 @@ _COMPLETE_ENDINGS = tuple("。．｡!！?？…‥♪」』）)")
 _COMPLETE_FORMS = (
     "ます", "です", "ました", "ません", "でした", "ましょう",
     "ください", "である", "だ", "よ", "ね",
+    # Casual sentence-final particles/forms common in Pokémon dialogue; safe
+    # because true continuations end in 、 or case particles (を/に/て...),
+    # never in these. Deliberately NOT included: な (prenominal おおきな
+    # is a genuine continuation), の (noun-phrase の likewise).
+    "さ", "ぞ", "ぜ", "わ", "かな", "かい", "だろう", "でしょう", "くれ",
 )
 
 
