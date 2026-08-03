@@ -13,7 +13,9 @@ ADB="${1:-$HOME/thor-work/platform-tools/adb}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
-"$ADB" get-state >/dev/null || { echo "No adb device - connect the Thor first" >&2; exit 1; }
+# Self-heal after a Thor reboot: the wireless-debugging port randomizes,
+# so scan-and-reconnect instead of asking the user for the new number.
+"$ADB" get-state >/dev/null 2>&1 || ADB="$ADB" bash "$REPO/tools/connect_thor.sh"
 
 # Termux environment prefix for headless run-as execution. $-signs stay
 # literal here (single quotes) and are expanded by the on-device shell.
