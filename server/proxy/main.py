@@ -172,6 +172,20 @@ async def get_upstream(path: str) -> httpx.Response:
     return await _get_client().get(path)
 
 
+def _protect_glossary_terms(text: str, entries) -> str:
+    """Undo s2twp phrase rewrites that clobber injected glossary targets.
+
+    The local model echoes glossary targets in Simplified (項目 → 项目), and
+    the output-side s2twp pass may then phrase-map them to a different Taiwan
+    word (项目 → 專案). Restore the exact glossary form for matched entries.
+    """
+    for entry in entries:
+        variant = _s2twp.convert(_tw2sp.convert(entry.dst))
+        if variant != entry.dst:
+            text = text.replace(variant, entry.dst)
+    return text
+
+
 def _error(status: int, message: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"message": message}})
 
@@ -304,14 +318,16 @@ async def chat_completions(request: Request) -> JSONResponse:
             # Cloud models emit Taiwan Traditional directly; only the local
             # Sakura output needs the OpenCC pass.
             if kind == "local":
-                lines = [_s2twp.convert(line) for line in lines]
+                lines = [
+                    _protect_glossary_terms(_s2twp.convert(line), entries) for line in lines
+                ]
             data["choices"][0]["message"]["content"] = json.dumps(
                 {"translations": lines}, ensure_ascii=False
             )
         else:
             output = sakura.unescape_line(content)
             if kind == "local":
-                output = _s2twp.convert(output)
+                output = _protect_glossary_terms(_s2twp.convert(output), entries)
             data["choices"][0]["message"]["content"] = output
 
         if failures:

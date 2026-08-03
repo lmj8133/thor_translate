@@ -105,7 +105,7 @@ Settings → Translation services → Add Online Translation Service → **OpenA
 - **Custom URL**：`http://<mac-ip>:8000/v1`（http 連私網 IP 為 PT 白名單允許）
 - **API key**：任意非空字串（如 `thor`；代理只檢查非空，非真正驗證）
 - **Model**：任意（代理一律改用 `OLLAMA_MODEL`）
-- 目標語言：**Chinese (Traditional, Taiwan)**（zh-Hant-TW）——代理輸出已是台灣正體（PT 再轉一次是恆等操作），但此設定讓瀑布備援的內建引擎也能正確轉繁
+- 目標語言：**Chinese (Simplified)**——沒看錯：這是「叫 PT 不要再轉換」的開關。台灣正體由代理全權輸出；若選 Traditional (TW)，PT 會對已繁化文本**二次轉換**（opencc 詞庫以簡體為鍵，繁體輸入退化成逐字轉）造成「畫面→畫麵」這類錯字。代價：極少數走到 PT 內建備援引擎的句子（代理完全失聯時）會顯示簡體，可接受
 - Advanced LLM configuration → **開啟 context**（預設關閉）→ 前文會轉成 Sakura 的「历史翻译」，提升人稱與譯名連貫性
 - System prompt / 翻譯 prompt **維持預設即可**（代理會整段改寫成 Sakura 官方格式；PT 的 system prompt 會被忽略）
 
@@ -141,5 +141,6 @@ uv run python tools/quality_check.py --endpoint http://<mac-ip>:8000/v1
 | 502 `Upstream ... returned 404` | 模型名不存在——對照 `ollama ls` 與 `OLLAMA_MODEL` |
 | 譯文尾端被截斷、或前文彷彿失憶 | num_ctx 不足（Ollama server log 會有 truncation 警告）→ 加大 Modelfile 的 `num_ctx` 重新 `ollama create` |
 | 第一句特別慢、之後正常 | 模型冷載入。代理啟動時會預熱＋釘住；若 Ollama 重啟過，重啟代理 |
-| PT 畫面顯示簡體 | 代理是未含 OpenCC 出口轉換的舊版（`uv sync` 後重啟）；或該句走了 PT 內建備援引擎且目標語言選成 Chinese (Simplified) |
+| 出現過度轉換錯字（如 畫面→畫**麵**） | PT 目標語言設成 Traditional 造成**二次轉換**——改選 Chinese (Simplified)，轉換由代理全權負責 |
+| PT 畫面顯示簡體 | 代理是未含 OpenCC 出口轉換的舊版（`uv sync` 後重啟）；或該句走了 PT 內建備援引擎（僅代理完全失聯時發生，屬預期取捨） |
 | 專有名詞仍不穩 | 該詞不在術語表——加進 `GLOSSARY_PATH` 檔案存檔即生效 |

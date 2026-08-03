@@ -14,7 +14,7 @@ import pytest
 from server.proxy import main, sakura
 from server.proxy.glossary import Glossary, GlossaryError
 
-GLOSSARY_TEXT = "ダイゴ->大吾 #人名\nポケモン->寶可夢\n"
+GLOSSARY_TEXT = "ダイゴ->大吾 #人名\nポケモン->寶可夢\nこうもく->項目\n"
 
 
 class FakeUpstream:
@@ -177,6 +177,17 @@ async def test_output_converted_to_taiwan_traditional(client, upstream, glossary
     resp = await client.post("/v1/chat/completions", json=pt_request("このソフトはもう使えない"))
     assert resp.status_code == 200
     assert resp.json()["choices"][0]["message"]["content"] == "這個軟體不能用了"
+
+
+async def test_local_s2twp_does_not_clobber_glossary_terms(client, upstream, glossary_file):
+    # The model echoes the injected 項目 as Simplified 项目; a naive s2twp pass
+    # would phrase-map that to 專案 — the protection restores the glossary form.
+    upstream.content = "请选择想看的项目"
+    resp = await client.post(
+        "/v1/chat/completions", json=pt_request("みたい　こうもくを　えらんで　ください")
+    )
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "請選擇想看的項目"
 
 
 async def test_history_normalized_back_to_simplified(client, upstream, glossary_file):
