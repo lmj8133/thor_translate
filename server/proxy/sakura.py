@@ -81,6 +81,20 @@ def unescape_line(text: str) -> str:
     return text.replace("\\n", "\n")
 
 
+# A dialogue box cut mid-sentence ends on a particle or a conjugating form -
+# grammar that cannot end an utterance. On-screen LABELS (place names, menu
+# captions, signposts) end on a noun instead, which is exactly what made
+# ワカバタウン ("Wakaba Town", a permanent map caption) glue itself onto every
+# line of dialogue. Requiring one of these endings keeps labels out.
+_CONTINUATION_ENDINGS = (
+    # case/binding particles
+    "を", "に", "へ", "と", "が", "は", "も", "や", "で", "から", "まで", "より",
+    # te-form and conjunctive endings that demand a continuation
+    "て", "で", "り", "し", "ば", "たら", "なら", "けど", "けれど", "ので", "のに",
+    # comma-like pauses
+    "、", "，",
+)
+
 # Sentence-final characters: a box ending with one of these is a finished
 # sentence; anything else is treated as continuing into the next box.
 _COMPLETE_ENDINGS = tuple("。．｡!！?？…‥♪」』）)")
@@ -108,10 +122,25 @@ def is_sentence_complete(text: str) -> bool:
     )
 
 
+def continues_into_next_box(text: str) -> bool:
+    """True when ``text`` is an utterance that was cut off mid-sentence.
+
+    Stricter than ``not is_sentence_complete(text)``: the text must actually
+    END on grammar that demands a continuation. Screen labels and captions
+    are neither complete sentences nor continuations, so they are excluded
+    from joining.
+    """
+    stripped = text.rstrip()
+    if not stripped or is_sentence_complete(stripped):
+        return False
+    return stripped.endswith(_CONTINUATION_ENDINGS)
+
+
 def join_continuation(
     context_pairs: list[tuple[str, str]],
     current: str,
-) -> tuple[str, list[str]]:
+    recent_sources: set[str] | None = None,
+) -> tuple[str, list[tuple[str, str]]]:
     """Prepend unfinished previous box sources to the current text.
 
     Japanese is verb-final, so the leading half of a sentence split across
@@ -122,33 +151,48 @@ def join_continuation(
     current box) and their translations leave the history (the model would
     otherwise treat that part as already translated).
 
-    Returns (joined input, remaining history translations). Trade-off: a
-    false positive re-displays the previous box's meaning on the current
-    box — mildly redundant, never wrong.
+    ``recent_sources`` (when given) limits joining to lines this proxy
+    translated moments ago. PlayTranslate's context holds whatever was on
+    screen, including long-lived captions like a map's place name, which are
+    not the previous utterance no matter how recently they were recorded.
+
+    Returns (joined input, remaining history pairs). Trade-off: a false
+    positive re-displays the previous box's meaning on the current box —
+    mildly redundant, never wrong.
     """
     consumed = 0
     for source, _ in reversed(context_pairs):
-        if is_sentence_complete(source):
+        if not continues_into_next_box(source):
+            break
+        if recent_sources is not None and source not in recent_sources:
             break
         consumed += 1
     if not consumed:
-        return current, [translation for _, translation in context_pairs]
+        return current, list(context_pairs)
     joined = "".join(source for source, _ in context_pairs[-consumed:]) + current
-    history = [translation for _, translation in context_pairs[:-consumed]]
-    return joined, history
+    return joined, list(context_pairs[:-consumed])
 
 
 def build_user_prompt(
     entries: list[GlossaryEntry],
-    history: list[str],
+    history: list[tuple[str, str]],
     input_text: str,
 ) -> str:
     """Assemble the official GalTransl v3 user prompt.
 
-    ``history`` holds previous *translated* lines (v3 passes history inside the
-    single user message as ``历史翻译：``, not as multi-turn chat).
+    ``history`` holds (source, translation) pairs of previous lines. GalTransl
+    v3 puts history inside the single user message as ``历史翻译：`` (not as
+    multi-turn chat) and passes translations only; the source is included
+    alongside because translation-only history hides WHO was speaking, which
+    made the model flip first person into third across dialogue boxes.
     """
-    history_block = "历史翻译：" + "\n".join(history) + "\n" if history else ""
+    history_block = (
+        "历史翻译：\n"
+        + "\n".join(f"{source} → {translation}" for source, translation in history)
+        + "\n"
+        if history
+        else ""
+    )
     glossary_block = "\n".join(entry.to_line() for entry in entries)
     return (
         f"{history_block}\n"

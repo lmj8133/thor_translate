@@ -23,13 +23,19 @@ SAMPLING = {"temperature": 0.2}
 
 def build_user_prompt(
     entries: list[GlossaryEntry],
-    history: list[str],
+    history: list[tuple[str, str]],
     input_text: str,
 ) -> str:
-    """Assemble the cloud user prompt from matched terms, history, and input."""
+    """Assemble the cloud user prompt from matched terms, history, and input.
+
+    History is passed as source→translation pairs: translation-only history
+    hides who was speaking, which made the model turn a self-introduction
+    ("大家都叫我...") into the third person ("大家都尊稱他為...").
+    """
     parts = []
     if history:
-        parts.append("前文譯文（僅供參考，不要重譯）：\n" + "\n".join(history) + "\n")
+        pairs = "\n".join(f"{source} → {translation}" for source, translation in history)
+        parts.append(f"前文（原文 → 譯文，僅供參考，不要重譯）：\n{pairs}\n")
     if entries:
         lines = "\n".join(
             f"{entry.src} → {entry.dst}" + (f"（{entry.note}）" if entry.note else "")

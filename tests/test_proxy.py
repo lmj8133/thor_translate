@@ -49,10 +49,12 @@ class FakeCloud:
 
     def __init__(self):
         self.payloads: list[dict] = []
+        self.timeouts: list[float | None] = []
         self.replies: list[tuple[int, str]] = [(200, "雲端譯文")]
 
-    async def post(self, payload: dict) -> httpx.Response:
+    async def post(self, payload: dict, read_timeout: float | None = None) -> httpx.Response:
         self.payloads.append(payload)
+        self.timeouts.append(read_timeout)
         status, content = self.replies[min(len(self.payloads) - 1, len(self.replies) - 1)]
         if status != 200:
             return httpx.Response(status, text="quota exceeded")
@@ -81,6 +83,9 @@ def cloud_chain(monkeypatch):
     monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(main, "CLOUD_MODELS", ["cloud-a", "cloud-b"])
     monkeypatch.setattr(main, "post_cloud", fake.post)
+    # Sticky-failover state is module-global; reset both halves per test.
+    monkeypatch.setattr(main, "_cloud_leader", None)
+    monkeypatch.setattr(main, "_leader_quota_day", None)
     return fake
 
 
@@ -199,7 +204,8 @@ async def test_history_normalized_back_to_simplified(client, upstream, glossary_
     )
     assert resp.status_code == 200
     prompt = upstream.payload["messages"][1]["content"]
-    assert prompt.startswith("历史翻译：这个软件不能用了\n")
+    # Japanese source passes through untouched; only the Chinese side converts.
+    assert prompt.startswith("历史翻译：\nソフトのはなし。 → 这个软件不能用了\n")
 
 
 async def test_context_becomes_history(client, upstream, glossary_file):
@@ -209,14 +215,62 @@ async def test_context_becomes_history(client, upstream, glossary_file):
     )
     assert resp.status_code == 200
     prompt = upstream.payload["messages"][1]["content"]
-    assert prompt.startswith("历史翻译：你好\n走吧\n")
+    assert prompt.startswith("历史翻译：\nこんにちは！ → 你好\n行くぞ！ → 走吧\n")
     assert "Recent dialogue lines" not in prompt
     assert prompt.endswith("将下面的文本从日文翻译成简体中文：\nダイゴさんは　どこ？")
 
 
+async def test_screen_label_is_not_treated_as_a_continuation(client, upstream, glossary_file):
+    # Regression: ワカバタウン is a permanent map caption PlayTranslate keeps in
+    # its context block. It ends on a noun, so it is neither a finished
+    # sentence nor a cut-off one, and must never be glued onto dialogue.
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request(
+            "やあ！　ヒビキなら　２かいに　いるよ！",
+            context=[("ワカバタウン", "若葉鎮")],
+        ),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.endswith(
+        "将下面的文本从日文翻译成简体中文：\nやあ！　ヒビキなら　２かいに　いるよ！"
+    )
+    assert "ワカバタウン" in prompt  # still available as history, just not joined
+
+
+def test_continues_into_next_box_needs_a_dangling_grammar_ending():
+    # Cut-off utterances end on particles or conjunctive forms...
+    assert sakura.continues_into_next_box("ダイゴさんに　たのまれて")
+    assert sakura.continues_into_next_box("いろいろな　ことを")
+    assert sakura.continues_into_next_box("それは、")
+    # ...whereas labels end on a noun, and finished sentences end properly.
+    assert not sakura.continues_into_next_box("ワカバタウン")
+    assert not sakura.continues_into_next_box("ポケモンセンター")
+    assert not sakura.continues_into_next_box("えらんで　ください")
+    assert not sakura.continues_into_next_box("いるよ！")
+
+
+async def test_stale_context_line_is_not_joined(client, upstream, glossary_file, monkeypatch):
+    # A dangling-looking line the proxy did not just translate (e.g. a caption
+    # lingering in PT's context) is history only, never joined.
+    monkeypatch.setattr(main, "_recent_sources", {})
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request("きたんだ！", context=[("たのまれて", "被拜託")]),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.endswith("将下面的文本从日文翻译成简体中文：\nきたんだ！")
+
+
 async def test_incomplete_previous_box_joins_input(client, upstream, glossary_file):
-    # The previous box ends mid-sentence (no sentence-final punctuation), so
-    # its source joins the input and its translation leaves the history.
+    # The previous box ends mid-sentence, so its source joins the input and
+    # its translation leaves the history. Translate it first: joining only
+    # applies to lines this proxy handled moments ago.
+    await client.post(
+        "/v1/chat/completions", json=pt_request("ダイゴさんに　たのまれて")
+    )
     resp = await client.post(
         "/v1/chat/completions",
         json=pt_request(
@@ -235,6 +289,8 @@ async def test_incomplete_previous_box_joins_input(client, upstream, glossary_fi
 
 async def test_continuation_chain_keeps_older_history(client, upstream, glossary_file):
     # Two trailing incomplete boxes join; the older finished pair stays as history.
+    for line in ("ダイゴさんに　たのまれて", "きみを　むかえに"):
+        await client.post("/v1/chat/completions", json=pt_request(line))
     resp = await client.post(
         "/v1/chat/completions",
         json=pt_request(
@@ -248,7 +304,7 @@ async def test_continuation_chain_keeps_older_history(client, upstream, glossary
     )
     assert resp.status_code == 200
     prompt = upstream.payload["messages"][1]["content"]
-    assert prompt.startswith("历史翻译：你好\n")
+    assert prompt.startswith("历史翻译：\nこんにちは！ → 你好\n")
     assert prompt.endswith(
         "将下面的文本从日文翻译成简体中文：\nダイゴさんに　たのまれてきみを　むかえにきたんだ！"
     )
@@ -262,7 +318,7 @@ async def test_continuation_join_can_be_disabled(client, upstream, glossary_file
     )
     assert resp.status_code == 200
     prompt = upstream.payload["messages"][1]["content"]
-    assert prompt.startswith("历史翻译：被拜托\n")
+    assert prompt.startswith("历史翻译：\nたのまれて → 被拜托\n")
     assert prompt.endswith("将下面的文本从日文翻译成简体中文：\nきたんだ！")
 
 
@@ -302,7 +358,7 @@ async def test_ambiguous_context_pair_dropped(client, upstream, glossary_file):
     resp = await client.post("/v1/chat/completions", json=body)
     assert resp.status_code == 200
     prompt = upstream.payload["messages"][1]["content"]
-    assert prompt.startswith("历史翻译：你好\n")
+    assert prompt.startswith("历史翻译：\nこんにちは！ → 你好\n")
     assert "防御" not in prompt
     assert prompt.endswith("将下面的文本从日文翻译成简体中文：\nたたかう")
 
@@ -400,6 +456,22 @@ async def test_batch_unparsable_payload_maps_to_400(client, upstream, glossary_f
     assert resp.status_code == 400
 
 
+async def test_cloud_history_carries_the_japanese_source(client, cloud_chain, upstream, glossary_file):
+    # Translation-only history hid who was speaking, turning a
+    # self-introduction into the third person; both sides are sent now.
+    cloud_chain.replies = [(200, "大家都叫我寶可夢博士")]
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request(
+            "みんなからは　はかせと　よばれておる",
+            context=[("わしの　なまえは　オダマキ。", "我的名字是小田卷")],
+        ),
+    )
+    assert resp.status_code == 200
+    prompt = cloud_chain.payloads[0]["messages"][1]["content"]
+    assert "わしの　なまえは　オダマキ。 → 我的名字是小田卷" in prompt
+
+
 async def test_cloud_first_serves_without_local(client, cloud_chain, upstream, glossary_file):
     cloud_chain.replies = [(200, "大吾先生在哪裡？")]
     resp = await client.post(
@@ -418,6 +490,48 @@ async def test_cloud_first_serves_without_local(client, cloud_chain, upstream, g
     assert prompt.endswith("翻譯以下文本：\nダイゴさんは　どこ？")
 
 
+async def test_cloud_read_timeouts_are_impatient_except_last(client, cloud_chain, upstream, glossary_file):
+    # Single-line requests get the tight timeout; the local backend is last in
+    # the chain here, so every cloud attempt is allowed to be impatient.
+    cloud_chain.replies = [(429, ""), (200, "第二棒")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert cloud_chain.timeouts == [
+        main.CLOUD_READ_TIMEOUT_SINGLE,
+        main.CLOUD_READ_TIMEOUT_SINGLE,
+    ]
+
+    # Batches are legitimately slower, so they get the roomier budget.
+    cloud_chain.payloads.clear()
+    cloud_chain.timeouts.clear()
+    cloud_chain.replies = [(200, "大吾先生\n你好")]
+    await client.post(
+        "/v1/chat/completions", json=pt_batch_request(["ダイゴさん", "こんにちは"])
+    )
+    assert cloud_chain.timeouts == [main.CLOUD_READ_TIMEOUT_BATCH]
+
+
+async def test_last_attempt_gets_unlimited_read_timeout(client, cloud_chain, glossary_file, monkeypatch):
+    # With no local fallback configured, the final cloud model is the last
+    # resort and must not be abandoned early.
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["cloud-a", "cloud-b"])
+    monkeypatch.setattr(main, "OLLAMA_MODEL", "")
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+
+    async def no_local(path, payload):
+        raise httpx.ConnectError("no local backend")
+
+    monkeypatch.setattr(main, "post_upstream", no_local)
+    cloud_chain.replies = [(429, ""), (200, "最後一棒")]
+    resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert resp.status_code == 200
+    # cloud-a is impatient, cloud-b is not the last attempt (local is), so it
+    # is impatient too — the local backend has no cloud timeout to record.
+    assert cloud_chain.timeouts == [
+        main.CLOUD_READ_TIMEOUT_SINGLE,
+        main.CLOUD_READ_TIMEOUT_SINGLE,
+    ]
+
+
 async def test_cloud_429_slides_to_next_model(client, cloud_chain, upstream, glossary_file):
     cloud_chain.replies = [(429, ""), (200, "第二棒接手")]
     resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
@@ -425,6 +539,43 @@ async def test_cloud_429_slides_to_next_model(client, cloud_chain, upstream, glo
     assert resp.json()["choices"][0]["message"]["content"] == "第二棒接手"
     assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
     assert upstream.payload is None
+
+
+async def test_failover_is_sticky_until_the_leader_itself_fails(client, cloud_chain, upstream, glossary_file):
+    # cloud-a fails once: cloud-b rescues the request and becomes the leader.
+    cloud_chain.replies = [(429, ""), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
+
+    # Next requests go straight to cloud-b - no re-probing of the sick model.
+    cloud_chain.payloads.clear()
+    cloud_chain.timeouts.clear()
+    cloud_chain.replies = [(200, "b 繼續")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-b", "cloud-b"]
+
+    # Only when the leader itself fails does the chain reach for cloud-a again.
+    cloud_chain.payloads.clear()
+    cloud_chain.replies = [(429, ""), (200, "a 回鍋")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-b", "cloud-a"]
+
+
+async def test_leader_resets_when_the_quota_day_rolls_over(client, cloud_chain, upstream, glossary_file, monkeypatch):
+    # cloud-a exhausts its quota; cloud-b takes over and sticks.
+    cloud_chain.replies = [(429, ""), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    cloud_chain.payloads.clear()
+    cloud_chain.replies = [(200, "b 繼續")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-b"]
+
+    # Next Pacific day: quotas are fresh, so the preferred model leads again.
+    monkeypatch.setattr(main, "_quota_day", lambda: main._leader_quota_day + 1)
+    cloud_chain.payloads.clear()
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a"]
 
 
 async def test_cloud_exhausted_falls_back_to_local(client, cloud_chain, upstream, glossary_file):

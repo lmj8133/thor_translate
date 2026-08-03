@@ -32,7 +32,9 @@ import json
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -78,16 +80,55 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 CLOUD_URL = os.environ.get(
     "CLOUD_URL", "https://generativelanguage.googleapis.com/v1beta/openai"
 )
+# Order = preference. gemini-3.1-flash-lite leads because it is the one
+# Google documents as translation-optimized AND it measured healthiest on
+# device (0.7 s vs 3.5-flash-lite stalling at 60-80 s on 2026-08-03); the
+# ailing model stays in the chain as spare quota, last.
 CLOUD_MODELS = [
     model.strip()
     for model in os.environ.get(
-        "CLOUD_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-a4b-it"
+        "CLOUD_MODELS", "gemini-3.1-flash-lite,gemma-4-26b-a4b-it,gemini-3.5-flash-lite"
     ).split(",")
     if model.strip()
 ]
 
 UPSTREAM_ERROR_EXCERPT = 300  # chars of upstream body carried into error messages
 MAX_COMPLETION_TOKENS = 4096
+
+# Cloud read timeouts, measured on device: healthy single-line replies land in
+# 0.5-2.3 s and batches in 3-5 s, while stalls jump straight to 12 s+. Giving a
+# stalled call more patience than that only delays the fallback, which itself
+# costs ~1 s - so cut losses early and let the next model in the chain answer.
+CLOUD_READ_TIMEOUT_SINGLE = float(os.environ.get("CLOUD_READ_TIMEOUT_SINGLE", "2.5"))
+CLOUD_READ_TIMEOUT_BATCH = float(os.environ.get("CLOUD_READ_TIMEOUT_BATCH", "6.0"))
+
+# TRACE=1 logs one line per translation with the pieces needed to diagnose a
+# bad result after the fact: what arrived, what continuation join did to it,
+# which glossary terms matched, and what came back. Off by default - the game
+# script would otherwise end up in a plaintext log.
+TRACE = os.environ.get("TRACE", "") == "1"
+
+# Sources this proxy translated within the last few seconds, used to tell a
+# genuinely preceding utterance from a long-lived on-screen caption that
+# PlayTranslate also keeps in its context block. Seconds, not minutes: two
+# halves of one sentence arrive back to back.
+CONTINUATION_WINDOW_S = float(os.environ.get("CONTINUATION_WINDOW_S", "20"))
+_recent_sources: dict[str, float] = {}
+
+
+def _remember_source(text: str, now: float) -> None:
+    _recent_sources[text] = now
+    for source, at in list(_recent_sources.items()):
+        if now - at > CONTINUATION_WINDOW_S:
+            del _recent_sources[source]
+
+
+def _recent_source_set(now: float) -> set[str]:
+    return {
+        source
+        for source, at in _recent_sources.items()
+        if now - at <= CONTINUATION_WINDOW_S
+    }
 
 # Fails fast (GlossaryError) on a configured-but-unreadable glossary file.
 glossary = Glossary(Path(GLOSSARY_PATH)) if GLOSSARY_PATH else Glossary(None)
@@ -100,6 +141,38 @@ if not GLOSSARY_PATH:
 # Per-game glossaries selectable per request (see _resolve_glossary).
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "glossaries")
 _game_glossaries: dict[str, Glossary] = {}
+
+# Sticky failover: whichever cloud model last answered leads the chain, and
+# keeps leading until it fails - then the model that rescued the request takes
+# over as leader. No probing, no cooldown timers: a sick model is simply
+# demoted the moment something else proves healthier, and only gets tried
+# again if the current leader also starts failing.
+_cloud_leader: str | None = None
+# ...reset daily: free-tier quotas refill at midnight Pacific, so crossing
+# that boundary clears the leader and the preferred model leads again. The
+# reason for the original demotion is deliberately NOT tracked - if the
+# preferred model is still sick, one request pays the timeout and the chain
+# re-demotes it, which is cheaper than the logic to tell the cases apart.
+_leader_quota_day: int | None = None
+QUOTA_RESET_TZ = timezone(timedelta(hours=-8))  # US/Pacific standard time
+
+
+def _quota_day() -> int:
+    """Ordinal of the current quota day (Pacific midnight boundaries)."""
+    return datetime.now(QUOTA_RESET_TZ).date().toordinal()
+
+
+def _cloud_chain() -> list[str]:
+    """CLOUD_MODELS ordered with the current leader first."""
+    global _cloud_leader, _leader_quota_day
+    if _cloud_leader is not None and _leader_quota_day != _quota_day():
+        logger.info(
+            "Quota day rolled over - resetting cloud leader (was %s)", _cloud_leader
+        )
+        _cloud_leader = None
+    if _cloud_leader is None or _cloud_leader not in CLOUD_MODELS:
+        return list(CLOUD_MODELS)
+    return [_cloud_leader] + [m for m in CLOUD_MODELS if m != _cloud_leader]
 
 
 def _resolve_glossary(model_name) -> Glossary:
@@ -146,7 +219,9 @@ def _get_cloud_client() -> httpx.AsyncClient:
         _cloud_client = httpx.AsyncClient(
             base_url=CLOUD_URL,
             headers={"Authorization": f"Bearer {GEMINI_API_KEY}"},
-            timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
+            # Per-request read timeouts are set at the call site; this is only
+            # the ceiling for anything that forgets to pass one.
+            timeout=httpx.Timeout(connect=5.0, read=CLOUD_READ_TIMEOUT_BATCH, write=10.0, pool=5.0),
         )
     return _cloud_client
 
@@ -210,8 +285,15 @@ async def post_upstream(path: str, payload: dict) -> httpx.Response:
     return await _get_client().post(path, json=payload)
 
 
-async def post_cloud(payload: dict) -> httpx.Response:
-    return await _get_cloud_client().post("/chat/completions", json=payload)
+async def post_cloud(payload: dict, read_timeout: float | None = None) -> httpx.Response:
+    client = _get_cloud_client()
+    if read_timeout is None:
+        return await client.post("/chat/completions", json=payload)
+    return await client.post(
+        "/chat/completions",
+        json=payload,
+        timeout=httpx.Timeout(connect=5.0, read=read_timeout, write=10.0, pool=5.0),
+    )
 
 
 def _protect_glossary_terms(text: str, entries) -> str:
@@ -252,6 +334,7 @@ def _last_user_content(body: dict) -> str | None:
 
 
 async def chat_completions(request: Request) -> JSONResponse:
+    global _cloud_leader, _leader_quota_day
     try:
         body = await request.json()
     except ValueError:
@@ -273,28 +356,31 @@ async def chat_completions(request: Request) -> JSONResponse:
             return _error(400, "Could not extract a JSON string array from batch request")
         input_text = "\n".join(sakura.escape_line(text) for text in texts)
         match_basis = "\n".join(texts)
-        history = [translation for _, translation in context_pairs]
+        history = list(context_pairs)
     else:
         texts = None
         # Batch regions are separate on-screen groups, so sentence joining
         # applies only to the single-box path.
         if CONTINUATION_JOIN:
-            raw_input, history = sakura.join_continuation(context_pairs, payload)
+            raw_input, history = sakura.join_continuation(
+                context_pairs, payload, _recent_source_set(time.monotonic())
+            )
         else:
             raw_input = payload
-            history = [translation for _, translation in context_pairs]
+            history = list(context_pairs)
         # Escape real newlines like the batch path: to Sakura, "\n" separates
         # independent texts, so an unescaped newline would split one dialogue
         # box into unrelated fragments.
         input_text = sakura.escape_line(raw_input)
         match_basis = raw_input
+        _remember_source(payload, time.monotonic())
     entries = _resolve_glossary(body.get("model")).match(match_basis)
     max_tokens = min(MAX_COMPLETION_TOKENS, max(128, 2 * len(input_text)))
 
     # Cloud-first, local-last attempt chain: any failure (unreachable, 429
     # quota, bad completion, batch line-count mismatch) slides to the next
     # backend, so the request degrades in quality instead of erroring.
-    attempts = [("cloud", model) for model in CLOUD_MODELS] if GEMINI_API_KEY else []
+    attempts = [("cloud", model) for model in _cloud_chain()] if GEMINI_API_KEY else []
     attempts.append(("local", OLLAMA_MODEL))
     failures: list[str] = []
     for kind, model in attempts:
@@ -316,7 +402,11 @@ async def chat_completions(request: Request) -> JSONResponse:
         else:
             # The Sakura model is trained on Simplified; its history block is
             # normalized back from our Traditional output (tw2sp).
-            local_history = [_tw2sp.convert(translation) for translation in history]
+            # Only the Chinese side is script-converted; the Japanese source
+            # must reach the model untouched.
+            local_history = [
+                (source, _tw2sp.convert(translation)) for source, translation in history
+            ]
             request_body = {
                 "model": model,
                 "messages": [
@@ -334,7 +424,14 @@ async def chat_completions(request: Request) -> JSONResponse:
 
         try:
             if kind == "cloud":
-                resp = await post_cloud(request_body)
+                # Impatient with every model but the last one: a stalled call
+                # is worth abandoning while another backend can still answer,
+                # but the final attempt has nobody left to hand off to.
+                is_last = (kind, model) == attempts[-1]
+                read_timeout = None if is_last else (
+                    CLOUD_READ_TIMEOUT_BATCH if is_batch else CLOUD_READ_TIMEOUT_SINGLE
+                )
+                resp = await post_cloud(request_body, read_timeout)
             else:
                 resp = await post_upstream("/v1/chat/completions", request_body)
         except httpx.HTTPError as exc:
@@ -371,6 +468,21 @@ async def chat_completions(request: Request) -> JSONResponse:
                 output = _protect_glossary_terms(_s2twp.convert(output), entries)
             data["choices"][0]["message"]["content"] = output
 
+        if kind == "cloud" and model != _cloud_leader:
+            logger.info("Cloud leader is now %s (was %s)", model, _cloud_leader)
+            _cloud_leader = model
+        if kind == "cloud":
+            _leader_quota_day = _quota_day()
+        if TRACE:
+            logger.info(
+                "TRACE %s | joined=%s | in=%r | hist=%r | terms=%s | out=%r",
+                model,
+                not is_batch and input_text != sakura.escape_line(payload),
+                input_text,
+                history,
+                [entry.src for entry in entries],
+                data["choices"][0]["message"]["content"],
+            )
         if failures:
             logger.warning("Served by %s after: %s", model, "; ".join(failures))
         # Unchanged fields (usage, id, ...) pass through — PT feeds its token
