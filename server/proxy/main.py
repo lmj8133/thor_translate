@@ -9,9 +9,13 @@ proxy's output boundary, so the result is correct regardless of PlayTranslate's
 own render-time conversion setting.
 
 Environment:
-    UPSTREAM_URL   Ollama base URL (default http://localhost:11434)
-    OLLAMA_MODEL   model name requested upstream (default sakura-galtransl-v3.7)
-    GLOSSARY_PATH  per-game gpt_dict file; unset disables glossary injection
+    UPSTREAM_URL      Ollama base URL (default http://localhost:11434)
+    OLLAMA_MODEL      local model name (default sakura-galtransl-v3.7)
+    GLOSSARY_PATH     per-game gpt_dict file; unset disables glossary injection
+    GEMINI_API_KEY    enables the cloud-first chain (unset = local only)
+    CLOUD_MODELS      comma-separated cloud model ids tried in order
+    CLOUD_URL         OpenAI-compatible cloud base URL (default: Gemini)
+    CONTINUATION_JOIN "0" disables cross-box sentence joining
 
 Run (from the repo root, LAN-reachable):
     GLOSSARY_PATH=glossaries/pokemon-oras.txt \
@@ -34,7 +38,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from opencc import OpenCC
 
-from . import sakura
+from . import cloud, sakura
 from .glossary import Glossary
 
 logger = logging.getLogger("proxy")
@@ -56,6 +60,22 @@ GLOSSARY_PATH = os.environ.get("GLOSSARY_PATH", "")
 # text boxes routinely end without sentence-final punctuation.
 CONTINUATION_JOIN = os.environ.get("CONTINUATION_JOIN", "1") != "0"
 
+# Cloud-first, local-fallback chain. With GEMINI_API_KEY set, each request
+# tries the CLOUD_MODELS in order (free-tier quota exhaustion returns 429 and
+# the chain slides to the next model); the local Sakura backend is always the
+# last resort, so an unreachable/exhausted cloud degrades instead of failing.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+CLOUD_URL = os.environ.get(
+    "CLOUD_URL", "https://generativelanguage.googleapis.com/v1beta/openai"
+)
+CLOUD_MODELS = [
+    model.strip()
+    for model in os.environ.get(
+        "CLOUD_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-it"
+    ).split(",")
+    if model.strip()
+]
+
 UPSTREAM_ERROR_EXCERPT = 300  # chars of upstream body carried into error messages
 MAX_COMPLETION_TOKENS = 4096
 
@@ -65,6 +85,7 @@ if not GLOSSARY_PATH:
     logger.warning("GLOSSARY_PATH not set - glossary injection disabled")
 
 _client: httpx.AsyncClient | None = None
+_cloud_client: httpx.AsyncClient | None = None
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -76,6 +97,17 @@ def _get_client() -> httpx.AsyncClient:
             timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
         )
     return _client
+
+
+def _get_cloud_client() -> httpx.AsyncClient:
+    global _cloud_client
+    if _cloud_client is None:
+        _cloud_client = httpx.AsyncClient(
+            base_url=CLOUD_URL,
+            headers={"Authorization": f"Bearer {GEMINI_API_KEY}"},
+            timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
+        )
+    return _cloud_client
 
 
 @asynccontextmanager
@@ -95,9 +127,34 @@ async def _lifespan(app: FastAPI):
             )
     except httpx.HTTPError as exc:
         logger.warning("Could not pin %s (Ollama unreachable?): %r", OLLAMA_MODEL, exc)
+    # Best effort: smoke-test each configured cloud model so a wrong model id
+    # or rejected parameter shows up in the startup log instead of silently
+    # sliding every request down to the local fallback.
+    if GEMINI_API_KEY:
+        for model in CLOUD_MODELS:
+            try:
+                resp = await post_cloud(
+                    {
+                        "model": model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1,
+                    }
+                )
+                if resp.status_code == 200:
+                    logger.info("Cloud model %s: OK", model)
+                else:
+                    logger.warning(
+                        "Cloud model %s: HTTP %d: %s", model, resp.status_code, resp.text[:200]
+                    )
+            except httpx.HTTPError as exc:
+                logger.warning("Cloud model %s: unreachable: %r", model, exc)
+    else:
+        logger.info("GEMINI_API_KEY not set - cloud chain disabled, local Sakura only")
     yield
     if _client is not None:
         await _client.aclose()
+    if _cloud_client is not None:
+        await _cloud_client.aclose()
 
 
 app = FastAPI(title="thor-translation glossary proxy", lifespan=_lifespan)
@@ -105,6 +162,10 @@ app = FastAPI(title="thor-translation glossary proxy", lifespan=_lifespan)
 
 async def post_upstream(path: str, payload: dict) -> httpx.Response:
     return await _get_client().post(path, json=payload)
+
+
+async def post_cloud(payload: dict) -> httpx.Response:
+    return await _get_cloud_client().post("/chat/completions", json=payload)
 
 
 async def get_upstream(path: str) -> httpx.Response:
@@ -172,54 +233,98 @@ async def chat_completions(request: Request) -> JSONResponse:
         # box into unrelated fragments.
         input_text = sakura.escape_line(raw_input)
         match_basis = raw_input
-    history = [_tw2sp.convert(translation) for translation in history]
-
     entries = glossary.match(match_basis)
-    upstream_body = {
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": sakura.SYSTEM_PROMPT},
-            {"role": "user", "content": sakura.build_user_prompt(entries, history, input_text)},
-        ],
-        # v1 proxy is non-streaming: incoming "stream": true is forced off.
-        "stream": False,
-        # GalTransl heuristic: budget roughly 2 output tokens per input char.
-        "max_tokens": min(MAX_COMPLETION_TOKENS, max(128, 2 * len(input_text))),
-        **sakura.SAMPLING,
-    }
+    max_tokens = min(MAX_COMPLETION_TOKENS, max(128, 2 * len(input_text)))
 
-    try:
-        resp = await post_upstream("/v1/chat/completions", upstream_body)
-    except httpx.HTTPError as exc:
-        return _error(502, f"Upstream {UPSTREAM_URL} unreachable: {exc!r}")
-    if resp.status_code != 200:
-        return _upstream_error(resp)
-    try:
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-    except (ValueError, LookupError, TypeError):
-        excerpt = " ".join(resp.text[:UPSTREAM_ERROR_EXCERPT].split())
-        return _error(502, f"Upstream returned a malformed completion: {excerpt}")
+    # Cloud-first, local-last attempt chain: any failure (unreachable, 429
+    # quota, bad completion, batch line-count mismatch) slides to the next
+    # backend, so the request degrades in quality instead of erroring.
+    attempts = [("cloud", model) for model in CLOUD_MODELS] if GEMINI_API_KEY else []
+    attempts.append(("local", OLLAMA_MODEL))
+    failures: list[str] = []
+    for kind, model in attempts:
+        if kind == "cloud":
+            request_body = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": cloud.SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": cloud.build_user_prompt(entries, history, input_text),
+                    },
+                ],
+                # v1 proxy is non-streaming: incoming "stream": true is forced off.
+                "stream": False,
+                "max_tokens": max_tokens,
+                **cloud.SAMPLING,
+            }
+        else:
+            # The Sakura model is trained on Simplified; its history block is
+            # normalized back from our Traditional output (tw2sp).
+            local_history = [_tw2sp.convert(translation) for translation in history]
+            request_body = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": sakura.SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": sakura.build_user_prompt(entries, local_history, input_text),
+                    },
+                ],
+                "stream": False,
+                # GalTransl heuristic: budget roughly 2 output tokens per input char.
+                "max_tokens": max_tokens,
+                **sakura.SAMPLING,
+            }
 
-    if is_batch:
-        lines = sakura.split_output_lines(content)
-        if len(lines) != len(texts):
-            # Unrecoverable here; a 400 triggers PT's per-text retry path.
-            return _error(
-                400,
-                f"Batch line count mismatch: sent {len(texts)} lines, model returned {len(lines)}",
+        try:
+            if kind == "cloud":
+                resp = await post_cloud(request_body)
+            else:
+                resp = await post_upstream("/v1/chat/completions", request_body)
+        except httpx.HTTPError as exc:
+            failures.append(f"{model}: unreachable ({exc!r})")
+            continue
+        if resp.status_code != 200:
+            excerpt = " ".join(resp.text[:120].split())
+            failures.append(f"{model}: HTTP {resp.status_code} {excerpt}")
+            continue
+        try:
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+        except (ValueError, LookupError, TypeError):
+            failures.append(f"{model}: malformed completion")
+            continue
+
+        if is_batch:
+            lines = sakura.split_output_lines(content)
+            if len(lines) != len(texts):
+                failures.append(f"{model}: line count {len(lines)} != {len(texts)}")
+                continue
+            # Cloud models emit Taiwan Traditional directly; only the local
+            # Sakura output needs the OpenCC pass.
+            if kind == "local":
+                lines = [_s2twp.convert(line) for line in lines]
+            data["choices"][0]["message"]["content"] = json.dumps(
+                {"translations": lines}, ensure_ascii=False
             )
-        data["choices"][0]["message"]["content"] = json.dumps(
-            {"translations": [_s2twp.convert(line) for line in lines]}, ensure_ascii=False
-        )
-    else:
-        data["choices"][0]["message"]["content"] = _s2twp.convert(
-            sakura.unescape_line(content)
-        )
+        else:
+            output = sakura.unescape_line(content)
+            if kind == "local":
+                output = _s2twp.convert(output)
+            data["choices"][0]["message"]["content"] = output
 
-    # Unchanged fields (usage, id, ...) pass through — PT feeds its token
-    # meter from usage.
-    return JSONResponse(data)
+        if failures:
+            logger.warning("Served by %s after: %s", model, "; ".join(failures))
+        # Unchanged fields (usage, id, ...) pass through — PT feeds its token
+        # meter from usage.
+        return JSONResponse(data)
+
+    detail = "; ".join(failures)
+    if is_batch and any("line count" in failure for failure in failures):
+        # A 400 triggers PT's per-text retry path.
+        return _error(400, f"All backends failed batch translation: {detail}")
+    return _error(502, f"All translation backends failed: {detail}")
 
 
 @app.get("/v1/models")

@@ -5,7 +5,9 @@
 ```
 Thor (PlayTranslate, Custom URL)
    → http://<mac-ip>:8000/v1        FastAPI 術語注入代理（本目錄）
-      → http://localhost:11434/v1   Ollama（Sakura-GalTransl-7B-v3.7）
+      → 雲端備援鏈（設 GEMINI_API_KEY 時啟用，品質優先）：
+         gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemma-4-26b-it
+      → http://localhost:11434/v1   Ollama（Sakura-GalTransl-7B-v3.7，最後兜底）
 ```
 
 代理的職責：把 PlayTranslate 的請求整段改寫成 Sakura-GalTransl v3.7 官方 prompt 格式，掃描原文、只注入命中的 per-game 術語（gpt_dict 格式），轉發給 Ollama。模型的簡中輸出在**代理出口直接轉台灣正體**（OpenCC `s2twp`，含台灣用語），不依賴 PT 端的顯示轉換設定；PT 回傳的前文 context 則以 `tw2sp` 正規化回簡體再餵給模型。
@@ -53,15 +55,30 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ```bash
 uv sync
+GEMINI_API_KEY="你的 AIza... key" \
 GLOSSARY_PATH=glossaries/pokemon-oras.txt \
 uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 ```
 
+（key 建議放 `~/.zshrc`：`export GEMINI_API_KEY="AIza..."`，之後啟動指令就不用帶）
+
 | 環境變數 | 預設 | 說明 |
 |----------|------|------|
 | `UPSTREAM_URL` | `http://localhost:11434` | Ollama 位址（不必曝露 LAN，由代理承擔） |
-| `OLLAMA_MODEL` | `sakura-galtransl-v3.7` | 上游模型名（client 傳什麼 model 都會被覆蓋） |
+| `OLLAMA_MODEL` | `sakura-galtransl-v3.7` | 本地兜底模型名 |
 | `GLOSSARY_PATH` | （未設 = 停用注入） | per-game 術語表檔案 |
+| `GEMINI_API_KEY` | （未設 = 純本地模式） | 啟用雲端優先備援鏈 |
+| `CLOUD_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-it` | 依序嘗試的雲端模型 |
+| `CONTINUATION_JOIN` | `1` | 跨框續句拼接（`0` 關閉） |
+
+### 雲端備援鏈行為
+
+每句依序嘗試：**3.5 Flash Lite（免費 500 次/天）→ 3.1 Flash Lite（再 500 次/天）→ Gemma 4 26B（14,400 次/天）→ 本地 Sakura**。任何一層失敗（429 額度盡、斷網、行數不符）自動滑到下一層——雲端全掛時退回本地，翻譯永遠不中斷。免費層 key 沒綁付款方式，**額度用完是硬停，不可能被收費**。
+
+- 啟動 log 會對每個雲端模型做煙霧測試（`Cloud model xxx: OK`）——若顯示 404 表示模型 id 有變，用 `CLOUD_MODELS` 環境變數修正（可用 `curl -H "Authorization: Bearer $GEMINI_API_KEY" https://generativelanguage.googleapis.com/v1beta/openai/models` 查現行清單）
+- 每次實際發生降級都會寫 WARNING log，可觀察額度消耗情形
+- 隱私註記：免費層的請求內容 Google 會用於改善產品（付費層不會）；本用途僅遊戲對話文本
+- 雲端模型直接輸出台灣正體（品質優於 OpenCC 機械轉換）；本地 Sakura 兜底輸出仍走 s2twp
 
 **keep_alive**：代理啟動時會自動呼叫 Ollama 原生 API 把模型釘在記憶體（`keep_alive=-1`，兼作預熱），避免閒置 5 分鐘後卸載、下一句冷載入卡頓。**若之後重啟過 Ollama，請重啟代理**（或一勞永逸：`launchctl setenv OLLAMA_KEEP_ALIVE -1` 後重啟 Ollama app；注意此設定重開機後失效）。
 

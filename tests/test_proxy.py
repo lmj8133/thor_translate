@@ -44,6 +44,46 @@ class FakeUpstream:
         )
 
 
+class FakeCloud:
+    """Records cloud payloads; replies per configured (status, content) queue."""
+
+    def __init__(self):
+        self.payloads: list[dict] = []
+        self.replies: list[tuple[int, str]] = [(200, "雲端譯文")]
+
+    async def post(self, payload: dict) -> httpx.Response:
+        self.payloads.append(payload)
+        status, content = self.replies[min(len(self.payloads) - 1, len(self.replies) - 1)]
+        if status != 200:
+            return httpx.Response(status, text="quota exceeded")
+        return httpx.Response(
+            status,
+            json={
+                "id": "chatcmpl-cloud",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": content}}
+                ],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 8},
+            },
+        )
+
+
+@pytest.fixture(autouse=True)
+def _local_only_by_default(monkeypatch):
+    # Keep the pre-cloud tests deterministic regardless of the dev machine's
+    # environment; cloud tests opt in via the `cloud_chain` fixture.
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "")
+
+
+@pytest.fixture
+def cloud_chain(monkeypatch):
+    fake = FakeCloud()
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["cloud-a", "cloud-b"])
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    return fake
+
+
 @pytest.fixture
 def upstream(monkeypatch):
     fake = FakeUpstream()
@@ -339,7 +379,7 @@ async def test_batch_count_mismatch_maps_to_400(client, upstream, glossary_file)
         "/v1/chat/completions", json=pt_batch_request(["ダイゴさん", "こんにちは"])
     )
     assert resp.status_code == 400
-    assert "mismatch" in resp.json()["error"]["message"]
+    assert "line count" in resp.json()["error"]["message"]
 
 
 async def test_batch_unparsable_payload_maps_to_400(client, upstream, glossary_file):
@@ -349,13 +389,69 @@ async def test_batch_unparsable_payload_maps_to_400(client, upstream, glossary_f
     assert resp.status_code == 400
 
 
+async def test_cloud_first_serves_without_local(client, cloud_chain, upstream, glossary_file):
+    cloud_chain.replies = [(200, "大吾先生在哪裡？")]
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request("ダイゴさんは　どこ？", context=[("こんにちは！", "你好")]),
+    )
+    assert resp.status_code == 200
+    # Cloud output is already Taiwan Traditional — returned verbatim, no OpenCC.
+    assert resp.json()["choices"][0]["message"]["content"] == "大吾先生在哪裡？"
+    assert upstream.payload is None  # local backend never called
+    payload = cloud_chain.payloads[0]
+    assert payload["model"] == "cloud-a"
+    prompt = payload["messages"][1]["content"]
+    assert "ダイゴ → 大吾（人名）" in prompt
+    assert "你好" in prompt  # cloud history stays Traditional as-is
+    assert prompt.endswith("翻譯以下文本：\nダイゴさんは　どこ？")
+
+
+async def test_cloud_429_slides_to_next_model(client, cloud_chain, upstream, glossary_file):
+    cloud_chain.replies = [(429, ""), (200, "第二棒接手")]
+    resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "第二棒接手"
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
+    assert upstream.payload is None
+
+
+async def test_cloud_exhausted_falls_back_to_local(client, cloud_chain, upstream, glossary_file):
+    cloud_chain.replies = [(429, ""), (429, "")]
+    upstream.content = "大吾先生在哪里？"
+    resp = await client.post("/v1/chat/completions", json=pt_request("ダイゴさんは　どこ？"))
+    assert resp.status_code == 200
+    # Local Sakura path: its Simplified output still gets the OpenCC pass.
+    assert resp.json()["choices"][0]["message"]["content"] == "大吾先生在哪裡？"
+    assert upstream.payload["model"] == main.OLLAMA_MODEL
+    assert upstream.payload["messages"][0]["content"] == sakura.SYSTEM_PROMPT
+
+
+async def test_batch_mismatch_on_cloud_falls_back_to_local(client, cloud_chain, upstream, glossary_file):
+    cloud_chain.replies = [(200, "只有一行")]  # wrong line count for both cloud models
+    upstream.content = "大吾先生\n你好"
+    resp = await client.post(
+        "/v1/chat/completions", json=pt_batch_request(["ダイゴさん", "こんにちは"])
+    )
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert json.loads(content) == {"translations": ["大吾先生", "你好"]}
+    assert upstream.payload is not None  # local served after cloud mismatches
+
+
 def test_is_sentence_complete_edges():
     assert sakura.is_sentence_complete("いるよ！")
     assert sakura.is_sentence_complete("ものがたり。")
     assert sakura.is_sentence_complete("なに？　")  # trailing full-width space
     assert sakura.is_sentence_complete("")
+    # Manual/menu pages end sentences without punctuation; grammatical
+    # sentence-final forms must count as complete or joins snowball there.
+    assert sakura.is_sentence_complete("せつめい　します")
+    assert sakura.is_sentence_complete("えらんで　ください")
+    assert sakura.is_sentence_complete("ポケモンずかんだ")
     assert not sakura.is_sentence_complete("たのまれて")
     assert not sakura.is_sentence_complete("それは、")
+    assert not sakura.is_sentence_complete("いろいろな　ことを")
 
 
 async def test_models_requires_bearer_and_passes_through(client, monkeypatch):
