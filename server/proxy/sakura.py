@@ -84,12 +84,23 @@ def unescape_line(text: str) -> str:
 # Sentence-final characters: a box ending with one of these is a finished
 # sentence; anything else is treated as continuing into the next box.
 _COMPLETE_ENDINGS = tuple("。．｡!！?？…‥♪」』）)")
+# Sentence-final grammatical forms: in-game manual/menu pages often end
+# sentences WITHOUT punctuation (e.g. せつめいします / えらんでください), and
+# treating those as continuations would snowball joins across every page.
+_COMPLETE_FORMS = (
+    "ます", "です", "ました", "ません", "でした", "ましょう",
+    "ください", "である", "だ", "よ", "ね",
+)
 
 
 def is_sentence_complete(text: str) -> bool:
     """True when a dialogue-box text ends a sentence (or is empty)."""
     stripped = text.rstrip()
-    return not stripped or stripped.endswith(_COMPLETE_ENDINGS)
+    return (
+        not stripped
+        or stripped.endswith(_COMPLETE_ENDINGS)
+        or stripped.endswith(_COMPLETE_FORMS)
+    )
 
 
 def join_continuation(
