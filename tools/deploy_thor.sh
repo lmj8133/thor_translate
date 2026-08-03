@@ -30,6 +30,13 @@ echo "== sync into Termux home =="
 "$ADB" shell "run-as com.termux sh -c 'cp -r /storage/emulated/0/thor-proxy/server /storage/emulated/0/thor-proxy/glossaries files/home/thor-proxy/ && chmod +x files/home/thor-proxy/server/thor/*.sh && cp files/home/thor-proxy/server/thor/boot-start.sh files/home/.termux/boot/boot-start.sh && chmod +x files/home/.termux/boot/boot-start.sh && echo synced'"
 
 echo "== restart proxy =="
+# A headless (run-as) proxy is only safe from Android's empty-process reaper
+# while TermuxService is alive - open the app to create a session if needed.
+if ! "$ADB" shell "dumpsys activity services com.termux 2>/dev/null" | grep -q ServiceRecord; then
+    echo "TermuxService not running - opening the Termux app to pin it"
+    "$ADB" shell monkey -p com.termux 1 >/dev/null 2>&1
+    sleep 3
+fi
 # PID parsing happens on the WSL side - nesting awk through three shell
 # layers is how quoting bugs are born.
 PID="$("$ADB" shell "run-as com.termux sh -c 'ps -ef'" | grep '[u]vicorn' | awk '{print $2}' | head -1 || true)"
@@ -39,7 +46,9 @@ if [ -n "$PID" ]; then
 fi
 # Same glossary semantics as run-proxy.sh: picker-selected per request;
 # a default table only if env.sh exports GLOSSARY_PATH.
-"$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; cd \$HOME/thor-proxy; . ./env.sh; nohup uvicorn server.proxy.main:app --host 127.0.0.1 --port 8000 > proxy.log 2>&1 & echo relaunched'"
+# Log is appended, not truncated: a restart mid-investigation must not
+# destroy the TRACE lines being diagnosed.
+"$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; cd \$HOME/thor-proxy; . ./env.sh; nohup uvicorn server.proxy.main:app --host 127.0.0.1 --port 8000 >> proxy.log 2>&1 & echo relaunched'"
 
 echo "== health check =="
 "$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; python /sdcard/thor-proxy/healthcheck.py'"
