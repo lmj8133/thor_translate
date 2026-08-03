@@ -6,7 +6,7 @@
 Thor (PlayTranslate, Custom URL)
    → http://<mac-ip>:8000/v1        FastAPI 術語注入代理（本目錄）
       → 雲端備援鏈（設 GEMINI_API_KEY 時啟用，品質優先）：
-         gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemma-4-26b-it
+         gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemma-4-26b-a4b-it
       → http://localhost:11434/v1   Ollama（Sakura-GalTransl-7B-v3.7，最後兜底）
 ```
 
@@ -68,7 +68,7 @@ uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 | `OLLAMA_MODEL` | `sakura-galtransl-v3.7` | 本地兜底模型名 |
 | `GLOSSARY_PATH` | （未設 = 停用注入） | per-game 術語表檔案 |
 | `GEMINI_API_KEY` | （未設 = 純本地模式） | 啟用雲端優先備援鏈 |
-| `CLOUD_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-it` | 依序嘗試的雲端模型 |
+| `CLOUD_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-a4b-it` | 依序嘗試的雲端模型 |
 | `CONTINUATION_JOIN` | `1` | 跨框續句拼接（`0` 關閉） |
 
 ### 雲端備援鏈行為

@@ -17,7 +17,7 @@
 >
 > **2026-08-02 部署完成:使用者已完成 server 部署與 Thor 端 PT 設定(OpenAI → Custom → 代理 URL),實機端到端確認可用 → Phase 02 正式關閉。**量化延遲(p50/p95)可隨時以 `uv run python tools/quality_check.py --endpoint http://<server-ip>:8000/v1` 補測,亦可留待 Phase 05 驗收一併量。
 >
-> **2026-08-03 品質升級 #3:雲端優先備援鏈(cloud mode)**。動機:三個實錘誤譯(はかせ→大師、したがめん→結算鍵、ひつよう→不需要極性翻反)證明全假名兒童向文本超出 VN 特化 Sakura-7B 能力,前處理 A/B(去全形空格)僅換錯型無法救。方案:代理新增 Gemini OpenAI 相容端點的 cloud 模式,每句依序試 gemini-3.5-flash-lite(免費 500/天)→ gemini-3.1-flash-lite(500/天)→ gemma-4-26b-it(14,400/天)→ 本地 Sakura;任一層失敗(429/斷網/行數不符)自動下滑,翻譯不中斷。免費層 key 無付款方式、額度盡即 429 硬停,實質 $0(實測使用者帳號免費額度:flash-lite 各 500 RPD/15 RPM,Gemma 14.4K RPD/30 RPM)。雲端直接輸出台灣正體(免 OpenCC);術語表/續句拼接/context 全保留(雲端 prompt 為一般指令格式,見 server/proxy/cloud.py);本地兜底路徑行為不變。啟動時對各雲端模型煙霧測試並記 log。GEMINI_API_KEY 未設 = 純本地(原行為)。測試 35 綠。
+> **2026-08-03 品質升級 #3:雲端優先備援鏈(cloud mode)**。動機:三個實錘誤譯(はかせ→大師、したがめん→結算鍵、ひつよう→不需要極性翻反)證明全假名兒童向文本超出 VN 特化 Sakura-7B 能力,前處理 A/B(去全形空格)僅換錯型無法救。方案:代理新增 Gemini OpenAI 相容端點的 cloud 模式,每句依序試 gemini-3.5-flash-lite(免費 500/天)→ gemini-3.1-flash-lite(500/天)→ gemma-4-26b-a4b-it(14,400/天;id 於 2026-08-03 實測修正,原猜測 gemma-4-26b-it 為 404)→ 本地 Sakura;任一層失敗(429/斷網/行數不符)自動下滑,翻譯不中斷。免費層 key 無付款方式、額度盡即 429 硬停,實質 $0(實測使用者帳號免費額度:flash-lite 各 500 RPD/15 RPM,Gemma 14.4K RPD/30 RPM)。雲端直接輸出台灣正體(免 OpenCC);術語表/續句拼接/context 全保留(雲端 prompt 為一般指令格式,見 server/proxy/cloud.py);本地兜底路徑行為不變。啟動時對各雲端模型煙霧測試並記 log。GEMINI_API_KEY 未設 = 純本地(原行為)。測試 35 綠。
 >
 > **2026-08-03 修正 #4:PT 端二次轉換與術語保護**。實機發現「畫面→畫麵」:代理輸出已是台灣正體,PT 目標語言若設 Traditional (TW) 會再跑一次 opencc4j——其詞庫以簡體為鍵,繁體輸入退化成逐字轉而過度轉換(先前「PT 再轉是恆等」的判斷**錯誤**,以此為準)。**修正:PT 目標語言改選 Chinese (Simplified)(= PT 不轉換,劇本由代理全權負責)**;代價僅「內建引擎備援句顯示簡體」(代理全掛才發生)。另修本地路徑術語被自家 s2twp 詞彙映射改寫的問題(模型回簡體 项目 → s2twp 誤映射成 專案):輸出後對命中詞條做保護還原(_protect_glossary_terms)。測試 36 綠。
 >

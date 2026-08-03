@@ -77,7 +77,7 @@ CLOUD_URL = os.environ.get(
 CLOUD_MODELS = [
     model.strip()
     for model in os.environ.get(
-        "CLOUD_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-it"
+        "CLOUD_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-a4b-it"
     ).split(",")
     if model.strip()
 ]
