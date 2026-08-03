@@ -35,7 +35,9 @@ if [ -n "$PID" ]; then
     "$ADB" shell "run-as com.termux sh -c 'kill $PID'"
     sleep 2
 fi
-"$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; cd \$HOME/thor-proxy; . ./env.sh; export GLOSSARY_PATH=glossaries/pokemon-oras.txt; nohup uvicorn server.proxy.main:app --host 127.0.0.1 --port 8000 > proxy.log 2>&1 & echo relaunched'"
+# Same glossary semantics as run-proxy.sh: picker-selected per request;
+# a default table only if env.sh exports GLOSSARY_PATH.
+"$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; cd \$HOME/thor-proxy; . ./env.sh; nohup uvicorn server.proxy.main:app --host 127.0.0.1 --port 8000 > proxy.log 2>&1 & echo relaunched'"
 
 echo "== health check =="
 "$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; python /sdcard/thor-proxy/healthcheck.py'"

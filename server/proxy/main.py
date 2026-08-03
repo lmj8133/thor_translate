@@ -92,7 +92,10 @@ MAX_COMPLETION_TOKENS = 4096
 # Fails fast (GlossaryError) on a configured-but-unreadable glossary file.
 glossary = Glossary(Path(GLOSSARY_PATH)) if GLOSSARY_PATH else Glossary(None)
 if not GLOSSARY_PATH:
-    logger.warning("GLOSSARY_PATH not set - glossary injection disabled")
+    logger.info(
+        "GLOSSARY_PATH not set - no default glossary; injection applies only "
+        "when the client's model field names a file in GLOSSARY_DIR"
+    )
 
 # Per-game glossaries selectable per request (see _resolve_glossary).
 GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "glossaries")

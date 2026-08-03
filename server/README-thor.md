@@ -69,6 +69,7 @@ Translation services 裡把 Custom URL 改為（或**新增第二個** OpenAI Cu
 - **Custom URL**：`http://127.0.0.1:8000/v1`（PT 白名單允許 http 連 loopback）
 - API key 任意非空、目標語言 **Chinese (Simplified)**（同 Mac 模式，PT 不做轉換）
 - **Model = 遊戲選擇器**：在 Translation services **清單**（不是編輯頁），服務開關開啟後其下方的小字子列 → 點開就是術語庫選單（pokemon-oras 等）。之後玩別款：建 `glossaries/<名字>.txt` → `deploy_thor.sh` 推上去 → 在這個選單點它——**換遊戲不用碰 Termux 也不用重啟**
+- 術語庫**只由這個選單決定**（沒選 = 不注入，啟動 log 會提示）；若想要「沒選時的預設表」，在 `~/thor-proxy/env.sh` 加 `export GLOSSARY_PATH=glossaries/pokemon-oras.txt`
 
 保留原本指向 Mac 的服務作第二位 → 在家時 Thor 代理掛了還有 Mac 撐著；出門時只有第一位生效。
 

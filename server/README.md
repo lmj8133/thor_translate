@@ -55,18 +55,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ```bash
 uv sync
-GEMINI_API_KEY="你的 AIza... key" \
-GLOSSARY_PATH=glossaries/pokemon-oras.txt \
 uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 ```
 
-（key 建議放 `~/.zshrc`：`export GEMINI_API_KEY="AIza..."`，之後啟動指令就不用帶）
+（前提：key 已放 `~/.zshrc`：`export GEMINI_API_KEY="AIza..."`。術語庫由 PT 的 Model 選單逐請求選擇；若想給「沒選遊戲時」一份預設表，啟動時加 `GLOSSARY_PATH=glossaries/pokemon-oras.txt`）
 
 | 環境變數 | 預設 | 說明 |
 |----------|------|------|
 | `UPSTREAM_URL` | `http://localhost:11434` | Ollama 位址（不必曝露 LAN，由代理承擔） |
 | `OLLAMA_MODEL` | `sakura-galtransl-v3.7` | 本地兜底模型名 |
-| `GLOSSARY_PATH` | （未設 = 停用注入） | per-game 術語表檔案 |
+| `GLOSSARY_PATH` | （未設 = 無預設表） | 「PT 沒選遊戲時」的預設術語表；選單路徑（Model 欄）不受影響 |
 | `GEMINI_API_KEY` | （未設 = 純本地模式） | 啟用雲端優先備援鏈 |
 | `CLOUD_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-a4b-it` | 依序嘗試的雲端模型 |
 | `CONTINUATION_JOIN` | `1` | 跨框續句拼接（`0` 關閉） |

@@ -17,6 +17,7 @@ fi
 # Keep the CPU awake while the screen is off; released on `termux-wake-unlock`.
 termux-wake-lock
 
-export GLOSSARY_PATH="${GLOSSARY_PATH:-glossaries/pokemon-oras.txt}"
+# Glossary selection is per-request via PT's model picker; a default table
+# is opt-in only (export GLOSSARY_PATH in env.sh if you want one).
 # 127.0.0.1: reachable by PlayTranslate on this device, invisible to the LAN.
 exec uvicorn server.proxy.main:app --host 127.0.0.1 --port 8000
