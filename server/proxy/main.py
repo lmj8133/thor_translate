@@ -41,6 +41,12 @@ from opencc import OpenCC
 from . import cloud, sakura
 from .glossary import Glossary
 
+# uvicorn configures only its own loggers; without this, our INFO-level
+# startup diagnostics (cloud smoke tests, glossary load, keep-alive pin)
+# never reach the console.
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 logger = logging.getLogger("proxy")
 
 # Output boundary: the model emits Simplified; convert to Taiwan Traditional
