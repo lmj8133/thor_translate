@@ -78,7 +78,7 @@ Translation services 裡把 Custom URL 改為（或**新增第二個** OpenAI Cu
 | 症狀 | 處理 |
 |------|------|
 | `[Process completed (signal 9)]` | Phantom killer 又殺程序——確認 §4-2 的 settings 值仍為 false（某些系統更新會重置） |
-| 螢幕關閉後翻譯停止 | wake-lock 沒拿到——通知列 Termux 常駐通知應顯示 wake lock held；重跑 run-proxy.sh |
+| 螢幕關閉後翻譯停止 | **這是刻意設計**：翻譯只在螢幕亮時發生（PT 擷取需要螢幕），代理隨裝置休眠、閒置零耗電；螢幕一亮立即恢復 |
 | 啟動極慢／pip 編譯錯誤 | 確認裝的是 F-Droid 版 Termux；依賴全為純 Python，**不應**出現編譯——若出現，貼錯誤訊息回報 |
 | 雲端三行全 unreachable | Thor 沒網路，或 DNS 問題——瀏覽器開任意網站確認連線 |
-| 電量消耗 | 閒置時執行 `termux-wake-unlock` 釋放喚醒鎖；遊戲時螢幕耗電遠大於代理 |
+| 電量消耗 | 代理**不持有 wake-lock**，閒置＝正常深度休眠、零額外耗電；遊戲時螢幕耗電遠大於代理 |

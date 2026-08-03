@@ -14,8 +14,9 @@ if [ -z "$GEMINI_API_KEY" ]; then
     exit 1
 fi
 
-# Keep the CPU awake while the screen is off; released on `termux-wake-unlock`.
-termux-wake-lock
+# No wake lock on purpose: translation only happens with the screen on, so
+# the proxy sleeps with the device and idle battery cost is zero. If a
+# screen-off use case ever appears, run `termux-wake-lock` manually.
 
 # Glossary selection is per-request via PT's model picker; a default table
 # is opt-in only (export GLOSSARY_PATH in env.sh if you want one).

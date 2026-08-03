@@ -25,7 +25,7 @@ echo "== push to staging =="
 "$ADB" push glossaries /sdcard/thor-proxy/ | tail -1
 
 echo "== sync into Termux home =="
-"$ADB" shell "run-as com.termux sh -c 'cp -r /storage/emulated/0/thor-proxy/server /storage/emulated/0/thor-proxy/glossaries files/home/thor-proxy/ && chmod +x files/home/thor-proxy/server/thor/*.sh && echo synced'"
+"$ADB" shell "run-as com.termux sh -c 'cp -r /storage/emulated/0/thor-proxy/server /storage/emulated/0/thor-proxy/glossaries files/home/thor-proxy/ && chmod +x files/home/thor-proxy/server/thor/*.sh && cp files/home/thor-proxy/server/thor/boot-start.sh files/home/.termux/boot/boot-start.sh && chmod +x files/home/.termux/boot/boot-start.sh && echo synced'"
 
 echo "== restart proxy =="
 # PID parsing happens on the WSL side - nesting awk through three shell
