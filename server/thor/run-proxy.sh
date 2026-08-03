@@ -18,6 +18,11 @@ fi
 # the proxy sleeps with the device and idle battery cost is zero. If a
 # screen-off use case ever appears, run `termux-wake-lock` manually.
 
+# Rotating log: the launchers append the console stream to proxy.log, which
+# nothing truncates. Point the app's own handler at a rotated file so months
+# of uptime cannot fill the flash; env.sh may override any of these.
+export LOG_FILE="${LOG_FILE:-$DIR/proxy-app.log}"
+
 # Glossary selection is per-request via PT's model picker; a default table
 # is opt-in only (export GLOSSARY_PATH in env.sh if you want one).
 # 127.0.0.1: reachable by PlayTranslate on this device, invisible to the LAN.

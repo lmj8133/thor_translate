@@ -35,6 +35,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import httpx
@@ -50,8 +51,27 @@ from .glossary import Glossary
 # uvicorn configures only its own loggers; without this, our INFO-level
 # startup diagnostics (cloud smoke tests, glossary load, keep-alive pin)
 # never reach the console.
+#
+# LOG_FILE (when set) adds a size-capped rotating handler. The launchers
+# append the console stream to proxy.log, which nothing ever truncates - on a
+# handheld that runs for months, TRACE lines would fill the flash. Rotation
+# belongs here rather than in the shell because ">>" cannot reclaim its own
+# file: the console stream keeps only startup banners and crash tracebacks.
+LOG_FILE = os.environ.get("LOG_FILE", "")
+LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(2 * 1024 * 1024)))
+LOG_BACKUPS = int(os.environ.get("LOG_BACKUPS", "3"))
+
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+if LOG_FILE:
+    _handlers.append(
+        RotatingFileHandler(
+            LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
+        )
+    )
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=_handlers,
 )
 logger = logging.getLogger("proxy")
 

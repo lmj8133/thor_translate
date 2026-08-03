@@ -57,7 +57,9 @@ fi
 # a default table only if env.sh exports GLOSSARY_PATH.
 # Log is appended, not truncated: a restart mid-investigation must not
 # destroy the TRACE lines being diagnosed.
-"$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; cd \$HOME/thor-proxy; . ./env.sh; nohup uvicorn server.proxy.main:app --host 127.0.0.1 --port 8000 >> proxy.log 2>&1 & echo relaunched'"
+# LOG_FILE mirrors run-proxy.sh: this path bypasses it, so the rotating
+# handler has to be set here too or a deploy-started proxy logs unbounded.
+"$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; cd \$HOME/thor-proxy; . ./env.sh; export LOG_FILE=\${LOG_FILE:-\$HOME/thor-proxy/proxy-app.log}; nohup uvicorn server.proxy.main:app --host 127.0.0.1 --port 8000 >> proxy.log 2>&1 & echo relaunched'"
 
 echo "== health check =="
 "$ADB" shell "run-as com.termux sh -c '$RUNAS_ENV; python /sdcard/thor-proxy/healthcheck.py'"
