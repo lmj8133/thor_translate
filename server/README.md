@@ -4,7 +4,7 @@
 
 ```
 Thor (PlayTranslate, Custom URL)
-   → http://<mac-ip>:8000/v1        FastAPI 術語注入代理（本目錄）
+   → http://<mac-ip>:8000/v1        術語注入代理（Starlette，本目錄；亦可改跑在 Thor 上，見 README-thor.md）
       → 雲端備援鏈（設 GEMINI_API_KEY 時啟用，品質優先）：
          gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemma-4-26b-a4b-it
       → http://localhost:11434/v1   Ollama（Sakura-GalTransl-7B-v3.7，最後兜底）
@@ -104,7 +104,7 @@ Settings → Translation services → Add Online Translation Service → **OpenA
 
 - **Custom URL**：`http://<mac-ip>:8000/v1`（http 連私網 IP 為 PT 白名單允許）
 - **API key**：任意非空字串（如 `thor`；代理只檢查非空，非真正驗證）
-- **Model**：任意（代理一律改用 `OLLAMA_MODEL`）
+- **Model = 遊戲選擇器**：位置不在編輯頁——回到 Translation services **清單**，服務開關開啟後，服務列**下方會多一行小字子列**（顯示目前 model 名）→ 點它開選擇器，**清單就是 `glossaries/` 裡的術語庫**（代理的 `/v1/models` 回的即此），選哪個就用哪個遊戲的術語表；沒選過則用預設表（實際翻譯模型不受此欄影響）
 - 目標語言：**Chinese (Simplified)**——沒看錯：這是「叫 PT 不要再轉換」的開關。台灣正體由代理全權輸出；若選 Traditional (TW)，PT 會對已繁化文本**二次轉換**（opencc 詞庫以簡體為鍵，繁體輸入退化成逐字轉）造成「畫面→畫麵」這類錯字。代價：極少數走到 PT 內建備援引擎的句子（代理完全失聯時）會顯示簡體，可接受
 - Advanced LLM configuration → **開啟 context**（預設關閉）→ 前文會轉成 Sakura 的「历史翻译」，提升人稱與譯名連貫性
 - System prompt / 翻譯 prompt **維持預設即可**（代理會整段改寫成 Sakura 官方格式；PT 的 system prompt 會被忽略）
@@ -113,7 +113,7 @@ Settings → Translation services → Add Online Translation Service → **OpenA
 
 - 格式：每行 `src->dst #note`（note 可省略；`#`、`//` 開頭為註解行）
 - **存檔即熱載入**（依 mtime），遊戲中途調整詞條免重啟
-- 一款遊戲一檔；換遊戲改 `GLOSSARY_PATH` 重啟代理
+- 一款遊戲一檔，放 `glossaries/<名字>.txt`；**換遊戲只要把 PT 服務設定的 Model 欄改成對應檔名**（如 `pokemon-oras`），免重啟、免碰 server；Model 沒對上任何檔案時用 `GLOSSARY_PATH` 預設表
 - Pokémon 官方繁中譯名來源：[神奇寶貝百科（52poke wiki）](https://wiki.52poke.com/)
 - 匹配為單純子字串包含：過短的詞可能誤中其他詞內部，命名時避免一兩個假名的詞條
 

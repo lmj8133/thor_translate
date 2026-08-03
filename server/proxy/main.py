@@ -27,16 +27,20 @@ Limitations (v1):
       always applies the GalTransl-recommended profile and OLLAMA_MODEL.
 """
 
+import asyncio
 import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from opencc import OpenCC
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from . import cloud, sakura
 from .glossary import Glossary
@@ -90,6 +94,34 @@ glossary = Glossary(Path(GLOSSARY_PATH)) if GLOSSARY_PATH else Glossary(None)
 if not GLOSSARY_PATH:
     logger.warning("GLOSSARY_PATH not set - glossary injection disabled")
 
+# Per-game glossaries selectable per request (see _resolve_glossary).
+GLOSSARY_DIR = os.environ.get("GLOSSARY_DIR", "glossaries")
+_game_glossaries: dict[str, Glossary] = {}
+
+
+def _resolve_glossary(model_name) -> Glossary:
+    """Pick the glossary for this request via the client's model field.
+
+    The proxy ignores the client's model for actual model selection, so the
+    field is free to act as a game selector: if it names a file in
+    GLOSSARY_DIR (model "pokemon-oras" → glossaries/pokemon-oras.txt), that
+    per-game glossary is used; anything else falls back to the GLOSSARY_PATH
+    default. Lets the user switch games from PlayTranslate's service settings
+    without touching the server.
+    """
+    if isinstance(model_name, str):
+        name = model_name.strip().lower()
+        # Conservative charset: no path separators, no traversal.
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", name):
+            if name not in _game_glossaries:
+                path = Path(GLOSSARY_DIR) / f"{name}.txt"
+                if path.is_file():
+                    _game_glossaries[name] = Glossary(path)
+                    logger.info("Per-game glossary active: %s", path)
+            if name in _game_glossaries:
+                return _game_glossaries[name]
+    return glossary
+
 _client: httpx.AsyncClient | None = None
 _cloud_client: httpx.AsyncClient | None = None
 
@@ -116,11 +148,12 @@ def _get_cloud_client() -> httpx.AsyncClient:
     return _cloud_client
 
 
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    # Best effort: preload the model and pin it in memory. keep_alive is not
-    # settable through /v1, so this native call is the only way to prevent the
-    # 5-minute idle unload without reconfiguring the Ollama server itself.
+async def _startup_checks() -> None:
+    """Best-effort diagnostics, run in the background so the port opens
+    immediately (the Gemma smoke test alone can take ~40 s cold)."""
+    # Preload the local model and pin it in memory. keep_alive is not settable
+    # through /v1, so this native call is the only way to prevent the 5-minute
+    # idle unload without reconfiguring the Ollama server itself.
     try:
         resp = await _get_client().post(
             "/api/generate", json={"model": OLLAMA_MODEL, "keep_alive": -1}
@@ -133,9 +166,9 @@ async def _lifespan(app: FastAPI):
             )
     except httpx.HTTPError as exc:
         logger.warning("Could not pin %s (Ollama unreachable?): %r", OLLAMA_MODEL, exc)
-    # Best effort: smoke-test each configured cloud model so a wrong model id
-    # or rejected parameter shows up in the startup log instead of silently
-    # sliding every request down to the local fallback.
+    # Smoke-test each configured cloud model so a wrong model id or rejected
+    # parameter shows up in the log instead of silently sliding every request
+    # down to the local fallback.
     if GEMINI_API_KEY:
         for model in CLOUD_MODELS:
             try:
@@ -156,14 +189,18 @@ async def _lifespan(app: FastAPI):
                 logger.warning("Cloud model %s: unreachable: %r", model, exc)
     else:
         logger.info("GEMINI_API_KEY not set - cloud chain disabled, local Sakura only")
+
+
+@asynccontextmanager
+async def _lifespan(app: Starlette):
+    checks = asyncio.create_task(_startup_checks())
     yield
+    if not checks.done():
+        checks.cancel()
     if _client is not None:
         await _client.aclose()
     if _cloud_client is not None:
         await _cloud_client.aclose()
-
-
-app = FastAPI(title="thor-translation glossary proxy", lifespan=_lifespan)
 
 
 async def post_upstream(path: str, payload: dict) -> httpx.Response:
@@ -172,10 +209,6 @@ async def post_upstream(path: str, payload: dict) -> httpx.Response:
 
 async def post_cloud(payload: dict) -> httpx.Response:
     return await _get_cloud_client().post("/chat/completions", json=payload)
-
-
-async def get_upstream(path: str) -> httpx.Response:
-    return await _get_client().get(path)
 
 
 def _protect_glossary_terms(text: str, entries) -> str:
@@ -215,7 +248,6 @@ def _last_user_content(body: dict) -> str | None:
     return None
 
 
-@app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> JSONResponse:
     try:
         body = await request.json()
@@ -253,7 +285,7 @@ async def chat_completions(request: Request) -> JSONResponse:
         # box into unrelated fragments.
         input_text = sakura.escape_line(raw_input)
         match_basis = raw_input
-    entries = glossary.match(match_basis)
+    entries = _resolve_glossary(body.get("model")).match(match_basis)
     max_tokens = min(MAX_COMPLETION_TOKENS, max(128, 2 * len(input_text)))
 
     # Cloud-first, local-last attempt chain: any failure (unreachable, 429
@@ -349,7 +381,6 @@ async def chat_completions(request: Request) -> JSONResponse:
     return _error(502, f"All translation backends failed: {detail}")
 
 
-@app.get("/v1/models")
 async def models(request: Request) -> JSONResponse:
     # Not real auth (the proxy is LAN-only): rejecting keyless probes makes
     # PlayTranslate's key check (which probes with AND without the key, and
@@ -357,14 +388,26 @@ async def models(request: Request) -> JSONResponse:
     token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
     if not token:
         return _error(401, "Missing bearer token")
-    try:
-        resp = await get_upstream("/v1/models")
-    except httpx.HTTPError as exc:
-        return _error(502, f"Upstream {UPSTREAM_URL} unreachable: {exc!r}")
-    if resp.status_code != 200:
-        return _upstream_error(resp)
-    try:
-        return JSONResponse(resp.json())
-    except ValueError:
-        excerpt = " ".join(resp.text[:UPSTREAM_ERROR_EXCERPT].split())
-        return _error(502, f"Upstream returned malformed JSON for /v1/models: {excerpt}")
+    # The "models" this proxy offers ARE the per-game glossaries (the model
+    # field is the game selector — see _resolve_glossary), so PlayTranslate's
+    # native model picker doubles as the game-switching menu.
+    names = []
+    glossary_dir = Path(GLOSSARY_DIR)
+    if glossary_dir.is_dir():
+        names = sorted(path.stem for path in glossary_dir.glob("*.txt"))
+    data = [
+        {"id": name, "object": "model", "created": 0, "owned_by": "thor-proxy"}
+        for name in names
+    ]
+    return JSONResponse({"object": "list", "data": data})
+
+
+# Plain Starlette (not FastAPI): keeps every dependency pure Python so the
+# proxy also pip-installs on Termux/Android without a compiler toolchain.
+app = Starlette(
+    routes=[
+        Route("/v1/chat/completions", chat_completions, methods=["POST"]),
+        Route("/v1/models", models, methods=["GET"]),
+    ],
+    lifespan=_lifespan,
+)

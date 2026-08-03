@@ -1,7 +1,7 @@
 """Proxy route tests: glossary injection, PT request parsing, error mapping.
 
 Upstream (Ollama) calls are intercepted by monkeypatching
-``main.post_upstream`` / ``main.get_upstream``; the app is exercised through
+``main.post_upstream`` / ``main.post_cloud``; the app is exercised through
 ``httpx.ASGITransport`` without a network.
 """
 
@@ -460,28 +460,48 @@ def test_is_sentence_complete_edges():
     assert sakura.is_sentence_complete("せつめい　します")
     assert sakura.is_sentence_complete("えらんで　ください")
     assert sakura.is_sentence_complete("ポケモンずかんだ")
+    assert sakura.is_sentence_complete("つよく　なりたいのさ")
+    assert sakura.is_sentence_complete("まけないぞ")
+    assert sakura.is_sentence_complete("どう　なるんだろう")
+    assert not sakura.is_sentence_complete("おおきな")  # prenominal, continues
     assert not sakura.is_sentence_complete("たのまれて")
     assert not sakura.is_sentence_complete("それは、")
     assert not sakura.is_sentence_complete("いろいろな　ことを")
 
 
-async def test_models_requires_bearer_and_passes_through(client, monkeypatch):
-    async def fake_get(path):
-        return httpx.Response(200, json={"object": "list", "data": [{"id": "sakura-galtransl-v3.7"}]})
+async def test_model_field_selects_per_game_glossary(client, upstream, glossary_file, tmp_path, monkeypatch):
+    # model "dq7" → glossaries dir dq7.txt; unknown names fall back to default.
+    game_dir = tmp_path / "games"
+    game_dir.mkdir()
+    (game_dir / "dq7.txt").write_text("ダイゴ->勇者大吾 #dq7专用\n", encoding="utf-8")
+    monkeypatch.setattr(main, "GLOSSARY_DIR", str(game_dir))
+    monkeypatch.setattr(main, "_game_glossaries", {})
 
-    monkeypatch.setattr(main, "get_upstream", fake_get)
+    request = pt_request("ダイゴさんは　どこ？")
+    request["model"] = "dq7"
+    resp = await client.post("/v1/chat/completions", json=request)
+    assert resp.status_code == 200
+    assert "ダイゴ->勇者大吾 #dq7专用" in upstream.payload["messages"][1]["content"]
+
+    request["model"] = "no-such-game"  # falls back to the default glossary
+    resp = await client.post("/v1/chat/completions", json=request)
+    assert "ダイゴ->大吾 #人名" in upstream.payload["messages"][1]["content"]
+
+    request["model"] = "../evil"  # path-ish names are ignored, default used
+    resp = await client.post("/v1/chat/completions", json=request)
+    assert "ダイゴ->大吾 #人名" in upstream.payload["messages"][1]["content"]
+
+
+async def test_models_lists_glossaries_behind_bearer(client, tmp_path, monkeypatch):
+    game_dir = tmp_path / "games"
+    game_dir.mkdir()
+    (game_dir / "pokemon-oras.txt").write_text("ポケモン->寶可夢\n", encoding="utf-8")
+    (game_dir / "dq7.txt").write_text("スライム->史萊姆\n", encoding="utf-8")
+    monkeypatch.setattr(main, "GLOSSARY_DIR", str(game_dir))
+
     keyless = await client.get("/v1/models")
     assert keyless.status_code == 401
     keyed = await client.get("/v1/models", headers={"Authorization": "Bearer anything"})
     assert keyed.status_code == 200
-    assert keyed.json()["data"][0]["id"] == "sakura-galtransl-v3.7"
-
-
-async def test_models_non_json_200_maps_to_502(client, monkeypatch):
-    async def fake_get(path):
-        return httpx.Response(200, text="<html>captive portal</html>")
-
-    monkeypatch.setattr(main, "get_upstream", fake_get)
-    resp = await client.get("/v1/models", headers={"Authorization": "Bearer x"})
-    assert resp.status_code == 502
-    assert "malformed" in resp.json()["error"]["message"]
+    # The picker menu doubles as the game selector: ids are glossary names.
+    assert [model["id"] for model in keyed.json()["data"]] == ["dq7", "pokemon-oras"]
