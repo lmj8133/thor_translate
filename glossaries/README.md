@@ -28,7 +28,8 @@ bash tools/deploy_thor.sh    # 推送 + 同步 + 重啟 + 健康檢查
 
 - PT 的模型選單（Translation services 清單 → 服務下方灰色小字子列）**重新打開就會出現新遊戲**，點選即切換——免重啟、免打字
 - 術語檔**熱載入**：之後改詞條，deploy 完立即生效（依 mtime＋size 偵測）
-- 最省事的路徑：直接請 Claude「幫我建 ○○ 的術語庫」——研究、逐條查證、建檔、部署一條龍（未來可寫 tools/build_glossary.py 做整批抓取）
+- 最省事的路徑：直接請 Claude「幫我建 ○○ 的術語庫」——研究、逐條查證、建檔、部署一條龍
+- **寶可夢系整批建表已自動化**：`uv run python tools/build_glossary.py`（52poke 列表頁抓取：全國圖鑑＋招式＋特性＋道具＋人物＋豐緣城鎮＋屬性，共約 4,000 條；`--refresh` 重新抓取，快取在 `~/.cache/52poke`）。手工區在 AUTO-GENERATED 標記線之上，重跑不會被覆蓋且同詞優先
 
 ## 已知詞條驗證紀錄
 
