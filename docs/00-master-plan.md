@@ -1,5 +1,15 @@
 # AYN Thor 3DS 即時翻譯 — 實作總計畫
 
+> **🏁 2026-08-03 專案完成,全數 phase 關閉**。最終架構**優於原計畫且零 fork**:
+>
+> - **Phase 01** ✅ 路線 A 定案(2026-08-02)
+> - **Phase 02** ✅ 完成後大幅演進:代理(Starlette,純 Python 依賴)跑在 **Thor 自己的 Termux** 裡,PT 連 127.0.0.1;翻譯走 **Gemini 免費層雲端鏈**(3 模型備援,$0)→ Mac 的 Sakura 為在家可選兜底;3,982 條 52poke 全量術語表(PT 模型選單即換遊戲選單)、續句拼接、台灣正體出口、開機自啟、重啟自癒、閒置零耗電
+> - **Phase 03** 🔒 不需要(無 fork patch 存留)
+> - **Phase 04** 🔒 按需封存(跨框斷句已由代理端解決;逐行捲動遊戲出現才復活)
+> - **Phase 05** 🔒 關閉(下螢幕面板降為按需;端到端整合以 Thor 單機形態完成;驗收 p50=1.06s/p95=2.22s ✅)
+>
+> 日常維運見 `server/README-thor.md`;新遊戲術語庫見 `glossaries/README.md`。
+
 > **⚠ 2026-08-02 Phase 01 定案更新**(細節與證據見 [verification-results.md](./verification-results.md)):
 >
 > - **路線 A(adopt-and-extend PlayTranslate)正式確認**,備援路線 B/C/D 關閉。G1=是、G2=是(過渡採上螢幕 overlay 配置)、G3=是(免 patch)、G4=本作不觸發。

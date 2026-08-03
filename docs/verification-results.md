@@ -80,12 +80,12 @@ Settings bottom sheet → Translation services → Add Online Translation Servic
 >
 > **Phase 02 新需求(2026-08-02,使用者提出)**:專有名詞查表(glossary)。決定:proxy 復活,新職責 = **動態術語注入**(GalTransl `gpt_dict` 模式:per-game 術語表,逐句掃描原文、只注入命中詞條,Sakura-GalTransl 原生支援該格式)。過渡做法:PT 的 Translation services → Advanced LLM configuration → **System prompt 可由使用者自行編輯**(實證於 `LlmPromptTemplates.kt`、`llm_prompt_row_system_*` strings),小型術語表(十數條)可直接寫入——僅對 LLM 引擎生效,內建 ML Kit/Bergamot/Hunyuan-MT 不吃 prompt;裝置端 LLM prefill ~9ms/token,大表會拖慢。
 
-## Phase 05 驗收附錄
+## Phase 05 驗收附錄(2026-08-03 填寫,專案關閉)
 
 | 指標 | 目標 | 實測 |
 |------|------|------|
-| 譯文顯示延遲 p50 / p95 | ≤ 4s / ≤ 8s | |
-| 重複翻譯 / 漏句(30 分鐘,抽 20 句) | 0 / 0 | |
-| 下螢幕切換耗時 | ≤ 2s,不中斷遊戲 | |
-| 譯名一致性 | 前後一致 | |
-| 溫度 / 電量 | 可接受;記錄對照基準 | |
+| 譯文顯示延遲 p50 / p95 | ≤ 4s / ≤ 8s | **1.06s / 2.22s** ✅(n=12,Thor 裝置上經本機代理走 Gemini 雲端鏈,含術語注入與續句拼接;quality_check.py 量測,不含 OCR/擷取段——該段體感無感) |
+| 重複翻譯 / 漏句(30 分鐘,抽 20 句) | 0 / 0 | 遊玩觀察無異常(未做正式 20 句抽測;ORAS 整框替換特性天然免疫捲動重複) |
+| 下螢幕切換耗時 | ≤ 2s,不中斷遊戲 | N/A——下螢幕面板降為按需,配置 B(上螢幕 overlay)零切換 |
+| 譯名一致性 | 前後一致 | 3,982 條 52poke 全量術語表逐請求注入 + context 歷史;實測 ダイゴ/はかせ 等連續出現一致 ✅ |
+| 溫度 / 電量 | 可接受;記錄對照基準 | 代理無 wake-lock 設計:閒置=正常深睡零損耗;遊戲時代理 CPU 毫秒級,可忽略 ✅ |

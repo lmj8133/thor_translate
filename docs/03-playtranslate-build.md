@@ -1,5 +1,7 @@
 # Phase 03: PlayTranslate fork 建置與源碼導覽
 
+> **🔒 2026-08-03 關閉:不再需要**。本階段唯一的存在理由是為 fork patch(Phase 04/05)鋪路;最終架構**完全不需要 fork**——品質訴求由代理端解決(Gemini 雲端鏈+術語表+續句拼接),下螢幕面板(Phase 05 patch #1)降為按需,Phase 04 亦按需。原版 PlayTranslate 3.0.1 + Thor 上的代理即為完成形態。若未來任一按需項目復活,再回來執行本階段;`playtranslate-architecture-notes.md` 保留作源碼參考。
+
 > **⚠ 2026-08-02 修正前言(依 Phase 01 結果,優先於下方原文)**:
 >
 > 1. **G3=是 → Step 5(自訂 base URL patch)整段略過**,內建 Custom preset 已實證可用。

@@ -1,5 +1,7 @@
 # Phase 04: 捲動續行合併（LineOverlapMerger）
 
+> **🔒 2026-08-03 關閉(維持按需,觸發條件未出現)**。另註:原痛點的「跨框句子斷裂」面向已由**代理端續句拼接**(server/proxy/sakura.py `join_continuation`,2026-08-03 實戰驗證)解決;殘餘的「捲動重複翻譯去重」面向仍屬 PT 端,**只在遇到逐行捲動的遊戲時**才需要復活本階段(屆時 Phase 03 一併復活)。
+>
 > **⚠ 2026-08-02 狀態:降為按需啟動(暫緩)**。Phase 01 實測:ORAS 對話為整框替換(一次換兩行),無「捲一行」重疊情境,本作不觸發此問題。原始碼先驗仍成立(翻譯路徑無行重疊處理),**遇到逐行捲動的遊戲時再啟動本階段**。Phase 05 已改為不依賴本階段。精確插入點已記於 `playtranslate-architecture-notes.md`(`ScanlineReconciler.reconcile` RETRANSLATE 分支,`Region.replacesBox` 帶舊文字;`TypewriterGate` 為現成先例)。
 > Produces: fork 內 `LineOverlapMerger` + 單元測試 + live-mode 整合
 
