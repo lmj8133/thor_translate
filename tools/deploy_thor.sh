@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy the current repo state to the Thor's Termux proxy and restart it.
 #
-# Usage (from anywhere, WSL side, Thor connected via adb):
+# Usage (from anywhere - WSL, macOS or Linux - Thor connected via adb):
 #     bash tools/deploy_thor.sh [path-to-adb]
 #
 # Pushes server/ + glossaries/ to the on-device staging dir, syncs them into
@@ -9,7 +9,16 @@
 # health check (one real translation through the cloud chain).
 set -euo pipefail
 
-ADB="${1:-$HOME/thor-work/platform-tools/adb}"
+# Explicit argument wins, then $ADB, then the WSL-era checkout path (kept so
+# existing setups keep working), then whatever is on PATH (Homebrew on macOS).
+default_adb() {
+    if [ -x "$HOME/thor-work/platform-tools/adb" ]; then
+        echo "$HOME/thor-work/platform-tools/adb"
+    else
+        command -v adb || echo adb
+    fi
+}
+ADB="${1:-${ADB:-$(default_adb)}}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
@@ -37,7 +46,7 @@ if ! "$ADB" shell "dumpsys activity services com.termux 2>/dev/null" | grep -q S
     "$ADB" shell monkey -p com.termux 1 >/dev/null 2>&1
     sleep 3
 fi
-# PID parsing happens on the WSL side - nesting awk through three shell
+# PID parsing happens on the host side - nesting awk through three shell
 # layers is how quoting bugs are born.
 PID="$("$ADB" shell "run-as com.termux sh -c 'ps -ef'" | grep '[u]vicorn' | awk '{print $2}' | head -1 || true)"
 if [ -n "$PID" ]; then
