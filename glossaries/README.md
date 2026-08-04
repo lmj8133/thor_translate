@@ -34,3 +34,4 @@ bash tools/deploy_thor.sh    # 推送 + 同步 + 重啟 + 健康檢查
 ## 已知詞條驗證紀錄
 
 - `pokemon-oras.txt`：全數詞條 2026-08-02~03 逐條對照 52poke zh-hant 頁面驗證（含 滿充/小遙/小悠/亞希達/原始回歸 等易錯名）
+- `pokemon-polished-crystal.txt`：英翻中（Polished Crystal 是英文版 GBC ROM hack，非日文遊戲，格式為 `英文詞->台灣譯名`）。2026-08-04 建立：寶可夢名稱（289隻，涵蓋 hack 的 New Pokédex 順序，含 Sylveon/Kleavor/Ursaluna/Annihilape 等後續世代回植進化型）取自 github.com/Rangi42/polishedcrystal 原始碼（pokemon_constants.asm + dex_order_new.asm + names.asm）逐一比對 52poke 官方繁中譯名；人名／地名／招式／道具同樣以原始碼常數與顯示字串為準，找不到官方中文對照的 hack 原創內容（少數道具與 2 招原創招式）另標記「寶可夢改造版原創」並附效果說明。已知風險：`Will`／`Blue`／`Red` 因是高頻常見英文詞而移除，避免子字串誤判整篇譯文。

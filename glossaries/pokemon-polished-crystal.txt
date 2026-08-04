@@ -1,0 +1,872 @@
+# Pokémon Polished Crystal (Johto/Kanto ROM hack) per-game glossary — GalTransl gpt_dict format.
+# One entry per line: <English term>-><official Taiwan name> [ #note]
+# Lines starting with '#' or '//' are comments. Notes are model-facing hints,
+# written in Simplified Chinese to match the model's training data; targets
+# stay Traditional (official TW names) and pass through PT's s2tw unchanged.
+# This hack is an ENGLISH-language ROM hack of Pokémon Crystal (Rangi42/polishedcrystal),
+# so this glossary is English->Chinese, unlike the Japanese->Chinese pokemon-oras.txt.
+# Species list covers all 289 Pokémon in the hack's New Pokédex order, including
+# later-generation evolutions the hack backports (e.g. Sylveon, Kleavor, Ursaluna,
+# Annihilape). Names verified against 52poke wiki (zh-hant) and the hack's own
+# GitHub source (github.com/Rangi42/polishedcrystal) on 2026-08-04.
+
+# ===== pokemon (289, New Pokédex order) =====
+Chikorita->菊草葉 #宝可梦
+Bayleef->月桂葉 #宝可梦
+Meganium->大竺葵 #宝可梦
+Cyndaquil->火球鼠 #宝可梦
+Quilava->火岩鼠 #宝可梦
+Typhlosion->火爆獸 #宝可梦
+Totodile->小鋸鱷 #宝可梦
+Croconaw->藍鱷 #宝可梦
+Feraligatr->大力鱷 #宝可梦
+Pidgey->波波 #宝可梦
+Pidgeotto->比比鳥 #宝可梦
+Pidgeot->大比鳥 #宝可梦
+Spearow->烈雀 #宝可梦
+Fearow->大嘴雀 #宝可梦
+Hoothoot->咕咕 #宝可梦
+Noctowl->貓頭夜鷹 #宝可梦
+Rattata->小拉達 #宝可梦
+Raticate->拉達 #宝可梦
+Sentret->尾立 #宝可梦
+Furret->大尾立 #宝可梦
+Pichu->皮丘 #宝可梦
+Pikachu->皮卡丘 #宝可梦
+Raichu->雷丘 #宝可梦
+Caterpie->綠毛蟲 #宝可梦
+Metapod->鐵甲蛹 #宝可梦
+Butterfree->巴大蝶 #宝可梦
+Weedle->獨角蟲 #宝可梦
+Kakuna->鐵殼蛹 #宝可梦
+Beedrill->大針蜂 #宝可梦
+Ledyba->芭瓢蟲 #宝可梦
+Ledian->安瓢蟲 #宝可梦
+Spinarak->圓絲蛛 #宝可梦
+Ariados->阿利多斯 #宝可梦
+Geodude->小拳石 #宝可梦
+Graveler->隆隆石 #宝可梦
+Golem->隆隆岩 #宝可梦
+Zubat->超音蝠 #宝可梦
+Golbat->大嘴蝠 #宝可梦
+Crobat->叉字蝠 #宝可梦
+Cleffa->皮寶寶 #宝可梦
+Clefairy->皮皮 #宝可梦
+Clefable->皮可西 #宝可梦
+Igglybuff->寶寶丁 #宝可梦
+Jigglypuff->胖丁 #宝可梦
+Wigglytuff->胖可丁 #宝可梦
+Togepi->波克比 #宝可梦
+Togetic->波克基古 #宝可梦
+Togekiss->波克基斯 #宝可梦
+Sandshrew->穿山鼠 #宝可梦
+Sandslash->穿山王 #宝可梦
+Ekans->阿柏蛇 #宝可梦
+Arbok->阿柏怪 #宝可梦
+Dunsparce->土龍弟弟 #宝可梦
+Mareep->咩利羊 #宝可梦
+Flaaffy->茸茸羊 #宝可梦
+Ampharos->電龍 #宝可梦
+Wooper->烏波 #宝可梦
+Quagsire->沼王 #宝可梦
+Clodsire->土王 #宝可梦
+Gastly->鬼斯 #宝可梦
+Haunter->鬼斯通 #宝可梦
+Gengar->耿鬼 #宝可梦
+Unown->未知圖騰 #宝可梦
+Wynaut->小果然 #宝可梦
+Wobbuffet->果然翁 #宝可梦
+Onix->大岩蛇 #宝可梦
+Steelix->大鋼蛇 #宝可梦
+Bellsprout->喇叭芽 #宝可梦
+Weepinbell->口呆花 #宝可梦
+Victreebel->大食花 #宝可梦
+Hoppip->毽子草 #宝可梦
+Skiploom->毽子花 #宝可梦
+Jumpluff->毽子棉 #宝可梦
+Paras->派拉斯 #宝可梦
+Parasect->派拉斯特 #宝可梦
+Poliwag->蚊香蝌蚪 #宝可梦
+Poliwhirl->蚊香君 #宝可梦
+Poliwrath->蚊香泳士 #宝可梦
+Politoed->蚊香蛙皇 #宝可梦
+Magikarp->鯉魚王 #宝可梦
+Gyarados->暴鯉龍 #宝可梦
+Goldeen->角金魚 #宝可梦
+Seaking->金魚王 #宝可梦
+Slowpoke->呆呆獸 #宝可梦
+Slowbro->呆殼獸 #宝可梦
+Slowking->呆呆王 #宝可梦
+Oddish->走路草 #宝可梦
+Gloom->臭臭花 #宝可梦
+Vileplume->霸王花 #宝可梦
+Bellossom->美麗花 #宝可梦
+Drowzee->催眠貘 #宝可梦
+Hypno->引夢貘人 #宝可梦
+Abra->凱西 #宝可梦
+Kadabra->勇基拉 #宝可梦
+Alakazam->胡地 #宝可梦
+Ditto->百變怪 #宝可梦
+Pineco->榛果球 #宝可梦
+Forretress->佛烈托斯 #宝可梦
+Nidoran♀->尼多蘭 #宝可梦
+Nidorina->尼多娜 #宝可梦
+Nidoqueen->尼多后 #宝可梦
+Nidoran♂->尼多朗 #宝可梦
+Nidorino->尼多力諾 #宝可梦
+Nidoking->尼多王 #宝可梦
+Yanma->蜻蜻蜓 #宝可梦
+Yanmega->遠古巨蜓 #宝可梦
+Sunkern->向日種子 #宝可梦
+Sunflora->向日花怪 #宝可梦
+Exeggcute->蛋蛋 #宝可梦
+Exeggutor->椰蛋樹 #宝可梦
+Bonsly->盆才怪 #宝可梦
+Sudowoodo->樹才怪 #宝可梦
+Venonat->毛球 #宝可梦
+Venomoth->摩魯蛾 #宝可梦
+Scyther->飛天螳螂 #宝可梦
+Scizor->巨鉗螳螂 #宝可梦
+Kleavor->劈斧螳螂 #宝可梦
+Pinsir->凱羅斯 #宝可梦
+Heracross->赫拉克羅斯 #宝可梦
+Koffing->瓦斯彈 #宝可梦
+Weezing->雙彈瓦斯 #宝可梦
+Grimer->臭泥 #宝可梦
+Muk->臭臭泥 #宝可梦
+Magnemite->小磁怪 #宝可梦
+Magneton->三合一磁怪 #宝可梦
+Magnezone->自爆磁怪 #宝可梦
+Voltorb->霹靂電球 #宝可梦
+Electrode->頑皮雷彈 #宝可梦
+Aipom->長尾怪手 #宝可梦
+Ambipom->雙尾怪手 #宝可梦
+Snubbull->布魯 #宝可梦
+Granbull->布魯皇 #宝可梦
+Vulpix->六尾 #宝可梦
+Ninetales->九尾 #宝可梦
+Growlithe->卡蒂狗 #宝可梦
+Arcanine->風速狗 #宝可梦
+Stantler->驚角鹿 #宝可梦
+Wyrdeer->詭角鹿 #宝可梦
+Azurill->露力麗 #宝可梦
+Marill->瑪力露 #宝可梦
+Azumarill->瑪力露麗 #宝可梦
+Diglett->地鼠 #宝可梦
+Dugtrio->三地鼠 #宝可梦
+Mankey->猴怪 #宝可梦
+Primeape->火爆猴 #宝可梦
+Annihilape->棄世猴 #宝可梦
+Meowth->喵喵 #宝可梦
+Persian->貓老大 #宝可梦
+Perrserker->喵頭目 #宝可梦
+Psyduck->可達鴨 #宝可梦
+Golduck->哥達鴨 #宝可梦
+Machop->腕力 #宝可梦
+Machoke->豪力 #宝可梦
+Machamp->怪力 #宝可梦
+Tyrogue->無畏小子 #宝可梦
+Hitmonlee->飛腿郎 #宝可梦
+Hitmonchan->快拳郎 #宝可梦
+Hitmontop->戰舞郎 #宝可梦
+Girafarig->麒麟奇 #宝可梦
+Farigiraf->奇麒麟 #宝可梦
+Tauros->肯泰羅 #宝可梦
+Miltank->大奶罐 #宝可梦
+Magby->鴨嘴寶寶 #宝可梦
+Magmar->鴨嘴火獸 #宝可梦
+Magmortar->鴨嘴炎獸 #宝可梦
+Smoochum->迷唇娃 #宝可梦
+Jynx->迷唇姐 #宝可梦
+Elekid->電擊怪 #宝可梦
+Electabuzz->電擊獸 #宝可梦
+Electivire->電擊魔獸 #宝可梦
+Smeargle->圖圖犬 #宝可梦
+Farfetch'd->大蔥鴨 #宝可梦
+Sirfetch'd->蔥遊兵 #宝可梦
+Natu->天然雀 #宝可梦
+Xatu->天然鳥 #宝可梦
+Qwilfish->千針魚 #宝可梦
+Overqwil->萬針魚 #宝可梦
+Tentacool->瑪瑙水母 #宝可梦
+Tentacruel->毒刺水母 #宝可梦
+Krabby->大鉗蟹 #宝可梦
+Kingler->巨鉗蟹 #宝可梦
+Shuckle->壺壺 #宝可梦
+Staryu->海星星 #宝可梦
+Starmie->寶石海星 #宝可梦
+Shellder->大舌貝 #宝可梦
+Cloyster->刺甲貝 #宝可梦
+Corsola->太陽珊瑚 #宝可梦
+Cursola->魔靈珊瑚 #宝可梦
+Remoraid->鐵炮魚 #宝可梦
+Octillery->章魚桶 #宝可梦
+Chinchou->燈籠魚 #宝可梦
+Lanturn->電燈怪 #宝可梦
+Seel->小海獅 #宝可梦
+Dewgong->白海獅 #宝可梦
+Lickitung->大舌頭 #宝可梦
+Lickilicky->大舌舔 #宝可梦
+Tangela->蔓藤怪 #宝可梦
+Tangrowth->巨蔓藤 #宝可梦
+Eevee->伊布 #宝可梦
+Vaporeon->水伊布 #宝可梦
+Jolteon->雷伊布 #宝可梦
+Flareon->火伊布 #宝可梦
+Espeon->太陽伊布 #宝可梦
+Umbreon->月亮伊布 #宝可梦
+Leafeon->葉伊布 #宝可梦
+Glaceon->冰伊布 #宝可梦
+Sylveon->仙子伊布 #宝可梦
+Horsea->墨海馬 #宝可梦
+Seadra->海刺龍 #宝可梦
+Kingdra->刺龍王 #宝可梦
+Gligar->天蠍 #宝可梦
+Gliscor->天蠍王 #宝可梦
+Delibird->信使鳥 #宝可梦
+Swinub->小山豬 #宝可梦
+Piloswine->長毛豬 #宝可梦
+Mamoswine->象牙豬 #宝可梦
+Teddiursa->熊寶寶 #宝可梦
+Ursaring->圈圈熊 #宝可梦
+Ursaluna->月月熊 #宝可梦
+Phanpy->小小象 #宝可梦
+Donphan->頓甲 #宝可梦
+Mantyke->小球飛魚 #宝可梦
+Mantine->巨翅飛魚 #宝可梦
+Skarmory->盔甲鳥 #宝可梦
+Doduo->嘟嘟 #宝可梦
+Dodrio->嘟嘟利 #宝可梦
+Ponyta->小火馬 #宝可梦
+Rapidash->烈焰馬 #宝可梦
+Cubone->卡拉卡拉 #宝可梦
+Marowak->嘎啦嘎啦 #宝可梦
+Kangaskhan->袋獸 #宝可梦
+Rhyhorn->獨角犀牛 #宝可梦
+Rhydon->鑽角犀獸 #宝可梦
+Rhyperior->超甲狂犀 #宝可梦
+Murkrow->黑暗鴉 #宝可梦
+Honchkrow->烏鴉頭頭 #宝可梦
+Houndour->戴魯比 #宝可梦
+Houndoom->黑魯加 #宝可梦
+Slugma->熔岩蟲 #宝可梦
+Magcargo->熔岩蝸牛 #宝可梦
+Sneasel->狃拉 #宝可梦
+Weavile->瑪狃拉 #宝可梦
+Sneasler->大狃拉 #宝可梦
+Misdreavus->夢妖 #宝可梦
+Mismagius->夢妖魔 #宝可梦
+Porygon->多邊獸 #宝可梦
+Porygon2->多邊獸Ⅱ #宝可梦
+Porygon-Z->多邊獸Ｚ #宝可梦
+Happiny->小福蛋 #宝可梦
+Chansey->吉利蛋 #宝可梦
+Blissey->幸福蛋 #宝可梦
+Lapras->拉普拉斯 #宝可梦
+Omanyte->菊石獸 #宝可梦
+Omastar->多刺菊石獸 #宝可梦
+Kabuto->化石盔 #宝可梦
+Kabutops->鐮刀盔 #宝可梦
+Aerodactyl->化石翼龍 #宝可梦
+Munchlax->小卡比獸 #宝可梦
+Snorlax->卡比獸 #宝可梦
+Bulbasaur->妙蛙種子 #宝可梦
+Ivysaur->妙蛙草 #宝可梦
+Venusaur->妙蛙花 #宝可梦
+Charmander->小火龍 #宝可梦
+Charmeleon->火恐龍 #宝可梦
+Charizard->噴火龍 #宝可梦
+Squirtle->傑尼龜 #宝可梦
+Wartortle->卡咪龜 #宝可梦
+Blastoise->水箭龜 #宝可梦
+Articuno->急凍鳥 #宝可梦
+Zapdos->閃電鳥 #宝可梦
+Moltres->火焰鳥 #宝可梦
+Raikou->雷公 #宝可梦
+Entei->炎帝 #宝可梦
+Suicune->水君 #宝可梦
+Dratini->迷你龍 #宝可梦
+Dragonair->哈克龍 #宝可梦
+Dragonite->快龍 #宝可梦
+Larvitar->幼基拉斯 #宝可梦
+Pupitar->沙基拉斯 #宝可梦
+Tyranitar->班基拉斯 #宝可梦
+Lugia->洛奇亞 #宝可梦
+Ho-Oh->鳳王 #宝可梦
+Mewtwo->超夢 #宝可梦
+Mew->夢幻 #宝可梦
+Celebi->時拉比 #宝可梦
+Dudunsparc->土龍節節 #宝可梦
+Mime Jr.->魔尼尼 #宝可梦
+Mr.Mime->魔牆人偶 #宝可梦
+Mr.Rime->踏冰人偶 #宝可梦
+
+# ===== npcs / story characters =====
+Ethan->阿響 #人名，男主角預設名（城都篇）
+Kris->克麗絲 #人名，女主角預設名（水晶版）
+Lyra->琴音 #人名，女主角搭檔（心金魂銀同款角色，Polished Crystal 沿用）
+Silver->小銀 #人名，勁敵
+Elm->空木 #人名，博士（城都）
+Oak->大木 #人名，博士（關都）
+Eusine->水京 #人名，蒐集脫離者的旅行家
+Buena->葵妍 #人名，電視明星
+Falkner->阿速 #人名，第一道館館主，鳥系
+Bugsy->阿筆 #人名，第二道館館主，蟲系
+Whitney->小茜 #人名，第三道館館主，一般系
+Morty->松葉 #人名，第四道館館主，幽靈系
+Chuck->阿四 #人名，第五道館館主，格鬥系
+Jasmine->阿蜜 #人名，第六道館館主，鋼系
+Pryce->柳伯 #人名，第七道館館主，冰系
+Clair->小椿 #人名，第八道館館主，龍系
+Koga->阿桔 #人名，城都四天王，毒系
+Bruno->希巴 #人名，城都四天王，格鬥系
+Karen->梨花 #人名，城都四天王，惡系
+Lance->阿渡 #人名，冠軍，龍系
+Brock->小剛 #人名，關都道館館主，岩石系
+Misty->小霞 #人名，關都道館館主，水系
+Lt. Surge->馬志士 #人名，關都道館館主，電系
+Erika->莉佳 #人名，關都道館館主，草系
+Janine->阿杏 #人名，關都道館館主，毒系（阿桔之女）
+Sabrina->娜姿 #人名，關都道館館主，超能力系
+Blaine->夏伯 #人名，關都道館館主，火系
+Kurt->鋼鐵 #人名，製作精靈球的老爺爺
+Archer->阿波羅 #人名，火箭隊幹部
+Ariana->雅典娜 #人名，火箭隊幹部
+Proton->蘭斯 #人名，火箭隊幹部
+Petrel->拉姆達 #人名，火箭隊幹部
+Giovanni->坂木 #人名，火箭隊首領
+
+# ===== towns (Johto + Kanto) =====
+New Bark Town->若葉鎮 #地名，城都，主角故鄉
+Cherrygrove City->吉花市 #地名，城都
+Violet City->桔梗市 #地名，城都
+Azalea Town->檜皮鎮 #地名，城都
+Goldenrod City->滿金市 #地名，城都
+Ecruteak City->緣朱市 #地名，城都
+Olivine City->淺蔥市 #地名，城都
+Cianwood City->湛藍市 #地名，城都
+Mahogany Town->卡吉鎮 #地名，城都
+Blackthorn City->煙墨市 #地名，城都
+Pallet Town->真新鎮 #地名，關都，第一世代主角故鄉
+Viridian City->常青市 #地名，關都
+Pewter City->深灰市 #地名，關都
+Cerulean City->華藍市 #地名，關都
+Vermilion City->枯葉市 #地名，關都
+Lavender Town->紫苑鎮 #地名，關都
+Celadon City->玉虹市 #地名，關都
+Saffron City->金黃市 #地名，關都
+Fuchsia City->淺紅市 #地名，關都
+Cinnabar Island->紅蓮鎮 #地名，關都
+
+# ===== moves (253; game-native display strings, some hack-original) =====
+Acrobatics->雜技 #招式
+Karate Chop->空手劈 #招式
+DoubleSlap->連環巴掌 #招式
+Aerial Ace->燕返 #招式
+Dragon Claw->龍爪 #招式
+Pay Day->聚寶功 #招式
+Fire Punch->火焰拳 #招式
+Ice Punch->冰凍拳 #招式
+ThunderPunch->雷電拳 #招式
+Scratch->抓 #招式
+X-Scissor->十字剪 #招式
+Night Slash->暗襲要害 #招式
+Air Slash->空氣斬 #招式
+Swords Dance->劍舞 #招式
+Cut->居合斬 #招式
+Gust->起風 #招式
+Wing Attack->翅膀攻擊 #招式
+Sucker Punch->突襲 #招式
+Fly->飛翔 #招式
+DazzlinGleam->魔法閃耀 #招式
+Volt Switch->伏特替換 #招式
+Vine Whip->藤鞭 #招式
+Stomp->踩踏 #招式
+Double Kick->二連踢 #招式
+Flare Blitz->閃焰衝鋒 #招式
+Stone Edge->尖石攻擊 #招式
+Focus Blast->真氣彈 #招式
+Toxic Spikes->毒菱 #招式
+Headbutt->頭錘 #招式
+Horn Attack->角撞 #招式
+Trick->戲法 #招式
+Hex->禍不單行 #招式
+Tackle->撞擊 #招式
+Body Slam->泰山壓頂 #招式
+Wrap->緊束 #招式
+Take Down->猛撞 #招式
+Thrash->大鬧一番 #招式
+Double-Edge->捨身衝撞 #招式
+Hail->冰雹 #招式
+Poison Sting->毒針 #招式
+U-turn->急速折返 #招式
+Pin Missile->飛彈針 #招式
+Leer->瞪眼 #招式
+Bite->咬住 #招式
+Growl->叫聲 #招式
+Roar->吼叫 #招式
+Sing->唱歌 #招式
+Supersonic->超音波 #招式
+Sonic Boom->音爆 #招式
+Disable->定身法 #招式
+Acid->溶解液 #招式
+Ember->火花 #招式
+Flamethrower->噴射火焰 #招式
+Calm Mind->冥想 #招式
+Water Gun->水槍 #招式
+Hydro Pump->水炮 #招式
+Surf->衝浪 #招式
+Ice Beam->冰凍光束 #招式
+Blizzard->暴風雪 #招式
+Psybeam->幻象光線 #招式
+Bubble Beam->泡沫光線 #招式
+Aurora Beam->極光束 #招式
+Hyper Beam->破壞光線 #招式
+Peck->啄 #招式
+Drill Peck->啄鑽 #招式
+Close Combat->近身戰 #招式
+Low Kick->踢倒 #招式
+Counter->雙倍奉還 #招式
+Seismic Toss->地球上投 #招式
+Strength->怪力 #招式
+Absorb->吸取 #招式
+Mega Drain->超級吸取 #招式
+Leech Seed->寄生種子 #招式
+Growth->生長 #招式
+Razor Leaf->飛葉快刀 #招式
+Solar Beam->日光束 #招式
+PoisonPowder->毒粉 #招式
+Stun Spore->麻痺粉 #招式
+Sleep Powder->催眠粉 #招式
+Petal Dance->花瓣舞 #招式
+String Shot->吐絲 #招式
+Dragon Rage->龍之怒 #招式
+Fire Spin->火焰旋渦 #招式
+ThunderShock->電擊 #招式
+Thunderbolt->十萬伏特 #招式
+Thunder Wave->電磁波 #招式
+Thunder->打雷 #招式
+Rock Throw->落石 #招式
+Earthquake->地震 #招式
+Avalanche->雪崩 #招式
+Dig->挖洞 #招式
+Toxic->劇毒 #招式
+Confusion->念力 #招式
+Psychic->精神強念 #招式
+Hypnosis->催眠術 #招式
+Hone Claws->磨爪 #招式
+Agility->高速移動 #招式
+Quick Attack->電光一閃 #招式
+Rage->憤怒 #招式
+Teleport->瞬間移動 #招式
+Night Shade->黑夜魔影 #招式
+Dragon Pulse->龍之波動 #招式
+Screech->刺耳聲 #招式
+Double Team->影子分身 #招式
+Recover->自我再生 #招式
+Rock Blast->岩石爆擊 #招式
+Minimize->變小 #招式
+Smokescreen->煙幕 #招式
+Confuse Ray->奇異之光 #招式
+Aqua Tail->水流尾 #招式
+Defense Curl->變圓 #招式
+Barrier->屏障 #招式
+Light Screen->光牆 #招式
+Haze->黑霧 #招式
+Reflect->反射壁 #招式
+Focus Energy->聚氣 #招式
+Flash Cannon->加農光炮 #招式
+Metronome->揮指 #招式
+Scald->熱水 #招式
+Trick Room->戲法空間 #招式
+Skill Swap->特性互換 #招式
+Lick->舌舔 #招式
+Gunk Shot->垃圾射擊 #招式
+Venoshock->毒液衝擊 #招式
+Earth Power->大地之力 #招式
+Fire Blast->大字爆炎 #招式
+Waterfall->攀瀑 #招式
+Icicle Crash->冰柱墜擊 #招式
+Swift->高速星星 #招式
+Iron Head->鐵頭 #招式
+Icicle Spear->冰錐 #招式
+Bulldoze->重踏 #招式
+Amnesia->瞬間失憶 #招式
+Roost->羽棲 #招式
+Glare->大蛇瞪眼 #招式
+Dream Eater->食夢 #招式
+Poison Jab->毒擊 #招式
+Bullet Punch->子彈拳 #招式
+Leech Life->吸血 #招式
+DrainingKiss->吸取之吻 #招式
+Brave Bird->勇鳥猛攻 #招式
+Transform->變身 #招式
+Water Pulse->水之波動 #招式
+Dizzy Punch->迷昏拳 #招式
+Spore->蘑菇孢子 #招式
+Flash->閃光 #招式
+Extrasensory->神通力 #招式
+Splash->躍起 #招式
+Dragon Dance->龍之舞 #招式
+Crabhammer->蟹鉗錘 #招式
+Explosion->大爆炸 #招式
+Bonemerang->骨頭回力鏢 #招式
+Rest->睡覺 #招式
+Rock Slide->岩崩 #招式
+Hyper Fang->必殺門牙 #招式
+Bulk Up->健美 #招式
+Conversion->紋理 #招式
+Tri Attack->三重攻擊 #招式
+Super Fang->憤怒門牙 #招式
+Slash->劈開 #招式
+Substitute->替身 #招式
+Giga Impact->終極衝擊 #招式
+Sketch->寫生 #招式
+Drain Punch->吸取拳 #招式
+Thief->小偷 #招式
+Will-O-Wisp->鬼火 #招式
+Zen Headbutt->意念頭錘 #招式
+Facade->硬撐 #招式
+Flame Charge->蓄能焰襲 #招式
+Hyper Voice->巨聲 #招式
+Curse->詛咒 #招式
+Gyro Ball->陀螺球 #招式
+Energy Ball->能量球 #招式
+Aeroblast->氣旋攻擊 #招式
+Seed Bomb->種子炸彈 #招式
+Reversal->起死回生 #招式
+Astonish->驚嚇 #招式
+Ice Shard->冰礫 #招式
+Protect->守住 #招式
+Mach Punch->音速拳 #招式
+Scary Face->鬼面 #招式
+Feint Attack->出奇一擊 #招式
+Sweet Kiss->天使之吻 #招式
+Belly Drum->腹鼓 #招式
+Sludge Bomb->污泥炸彈 #招式
+Mud-Slap->擲泥 #招式
+Octazooka->章魚桶炮 #招式
+Spikes->撒菱 #招式
+Zap Cannon->電磁炮 #招式
+Foresight->識破 #招式
+Destiny Bond->同命 #招式
+Perish Song->滅亡之歌 #招式
+Icy Wind->冰凍之風 #招式
+Power Gem->力量寶石 #招式
+Wild Charge->瘋狂伏特 #招式
+Power Whip->強力鞭打 #招式
+Outrage->逆鱗 #招式
+Sandstorm->沙暴 #招式
+Giga Drain->終極吸取 #招式
+Endure->挺住 #招式
+Charm->撒嬌 #招式
+Rollout->滾動 #招式
+False Swipe->點到為止 #招式
+Swagger->虛張聲勢 #招式
+Shell Smash->破殼 #招式
+Spark->電光 #招式
+Bug Bite->蟲咬 #招式
+Steel Wing->鋼翼 #招式
+Mean Look->黑色目光 #招式
+Attract->迷人 #招式
+Sleep Talk->夢話 #招式
+Heal Bell->治癒鈴聲 #招式
+Return->報恩 #招式
+Psystrike->精神擊破 #招式
+Bug Buzz->蟲鳴 #招式
+Safeguard->神秘守護 #招式
+Pain Split->分擔痛楚 #招式
+Sacred Fire->神聖之火 #招式
+Magnitude->震級 #招式
+DynamicPunch->爆裂拳 #招式
+Megahorn->超級角擊 #招式
+DragonBreath->龍息 #招式
+Baton Pass->接棒 #招式
+Encore->再來一次 #招式
+Pursuit->追打 #招式
+Rapid Spin->高速旋轉 #招式
+Shadow Claw->暗影爪 #招式
+Iron Tail->鐵尾 #招式
+Metal Claw->金屬爪 #招式
+Aura Sphere->波導彈 #招式
+HealingLight->治癒之願 #招式
+Hurricane->暴風 #招式
+Knock Off->拍落 #招式
+Hidden Power->覺醒力量 #招式
+Cross Chop->十字劈 #招式
+Aqua Jet->水流噴射 #招式
+Rain Dance->求雨 #招式
+Sunny Day->大晴天 #招式
+Crunch->咬碎 #招式
+Mirror Coat->鏡面反射 #招式
+Nasty Plot->詭計 #招式
+ExtremeSpeed->神速 #招式
+AncientPower->原始之力 #招式
+Shadow Ball->暗影球 #招式
+Future Sight->預知未來 #招式
+Rock Smash->碎岩 #招式
+Whirlpool->潮旋 #招式
+Dark Pulse->惡之波動 #招式
+Moonblast->月亮之力 #招式
+Play Rough->嬉鬧 #招式
+Struggle->掙扎 #招式
+High Jump Kick->飛膝踢 #招式
+Disarm Voice->魅惑之聲 #招式
+Fresh Snack->零嘴 #招式，寶可夢改造版原創，效果為回復自己最大HP的一半
+Fury Strikes->亂抓 #招式，寶可夢改造版原創，效果為抓或啄2-5次
+
+# ===== items (254; game-native display strings, some hack-original) =====
+Poké Ball->精靈球 #道具
+Great Ball->超級球 #道具
+Ultra Ball->高級球 #道具
+Master Ball->大師球 #道具
+Safari Ball->狩獵球 #道具
+Level Ball->等級球 #道具
+Lure Ball->誘餌球 #道具
+Moon Ball->月亮球 #道具
+Friend Ball->友友球 #道具
+Fast Ball->速度球 #道具
+Heavy Ball->沉重球 #道具
+Love Ball->甜蜜球 #道具
+Repeat Ball->重複球 #道具
+Timer Ball->計時球 #道具
+Nest Ball->巢穴球 #道具
+Net Ball->捕網球 #道具
+Dive Ball->潛水球 #道具
+Luxury Ball->豪華球 #道具
+Heal Ball->治癒球 #道具
+Quick Ball->先機球 #道具
+Dusk Ball->黑暗球 #道具
+Dream Ball->夢境球 #道具
+Premier Ball->紀念球 #道具
+Cherish Ball->貴重球 #道具
+Potion->傷藥 #道具
+Super Potion->好傷藥 #道具
+Hyper Potion->厲害傷藥 #道具
+Max Potion->全滿藥 #道具
+Antidote->解毒藥 #道具
+Burn Heal->灼傷藥 #道具
+ParalyzeHeal->解麻藥 #道具
+Awakening->解眠藥 #道具
+Ice Heal->解凍藥 #道具
+Full Heal->萬靈藥 #道具
+Full Restore->全復藥 #道具
+Revive->活力碎片 #道具
+Max Revive->活力塊 #道具
+Ether->ＰＰ單項小補劑 #道具
+Max Ether->ＰＰ單項全補劑 #道具
+Elixir->ＰＰ多項小補劑 #道具
+Max Elixir->ＰＰ多項全補劑 #道具
+HP Up->ＨＰ增強劑 #道具
+Protein->攻擊增強劑 #道具
+Iron->防禦增強劑 #道具
+Carbos->速度增強劑 #道具
+Calcium->特攻增強劑 #道具
+Zinc->特防增強劑 #道具
+Rare Candy->神奇糖果 #道具
+PP Up->ＰＰ提升劑 #道具
+PP Max->ＰＰ極限提升劑 #道具
+Fresh Water->美味之水 #道具
+Soda Pop->勁爽汽水 #道具
+Lemonade->果汁牛奶 #道具
+Moomoo Milk->哞哞鮮奶 #道具
+RageCandyBar->憤怒饅頭 #道具
+EnergyPowder->元氣粉 #道具
+Energy Root->元氣根 #道具
+Heal Powder->萬能粉 #道具
+Revival Herb->復活草 #道具
+Sacred Ash->聖灰 #道具
+Cheri Berry->櫻子果 #道具
+Chesto Berry->零餘果 #道具
+Pecha Berry->桃桃果 #道具
+Rawst Berry->莓莓果 #道具
+Aspear Berry->利木果 #道具
+Leppa Berry->蘋野果 #道具
+Oran Berry->橙橙果 #道具
+Persim Berry->柿仔果 #道具
+Lum Berry->木子果 #道具
+Sitrus Berry->文柚果 #道具
+Figy Berry->勿花果 #道具
+Pomeg Berry->榴石果 #道具
+Kelpsy Berry->藻根果 #道具
+Qualot Berry->比巴果 #道具
+Hondew Berry->哈密果 #道具
+Grepa Berry->萄葡果 #道具
+Tamato Berry->茄番果 #道具
+Liechi Berry->枝荔果 #道具
+Ganlon Berry->龍睛果 #道具
+Salac Berry->沙鱗果 #道具
+Petaya Berry->龍火果 #道具
+Apicot Berry->杏仔果 #道具
+Lansat Berry->蘭薩果 #道具
+Starf Berry->星桃果 #道具
+Enigma Berry->謎芝果 #道具
+Custap Berry->釋陀果 #道具
+Jaboca Berry->嘉珍果 #道具
+Rowap Berry->霧蓮果 #道具
+Kee Berry->亞開果 #道具
+MarangaBerry->香羅果 #道具
+Berry Juice->樹果汁 #道具
+Repel->除蟲噴霧 #道具
+Super Repel->白銀噴霧 #道具
+Max Repel->黃金噴霧 #道具
+Escape Rope->離洞繩 #道具
+Poké Doll->皮皮玩偶 #道具
+Mulch->速速肥 #道具
+Honey->甜甜蜜 #道具
+X Attack->力量強化 #道具
+X Defend->防禦強化 #道具
+X Speed->速度強化 #道具
+X Sp.Atk->特攻強化 #道具
+X Sp.Def->特防強化 #道具
+X Accuracy->命中強化 #道具
+Dire Hit->要害攻擊 #道具
+Guard Spec.->能力防守 #道具
+AbilityPatch->特性膏藥 #道具
+Leaf Stone->葉之石 #道具
+Fire Stone->火之石 #道具
+Water Stone->水之石 #道具
+ThunderStone->雷之石 #道具
+Ice Stone->冰之石 #道具
+Moon Stone->月之石 #道具
+Sun Stone->日之石 #道具
+Dusk Stone->暗之石 #道具
+Shiny Stone->光之石 #道具
+Everstone->不變之石 #道具
+Exp.Share->學習裝置 #道具
+Silk Scarf->絲綢圍巾 #道具
+Black Belt->黑帶 #道具
+Sharp Beak->銳利鳥嘴 #道具
+Poison Barb->毒針 #道具
+Soft Sand->柔軟沙子 #道具
+Hard Stone->硬石頭 #道具
+SilverPowder->銀粉 #道具
+Spell Tag->詛咒之符 #道具
+Metal Coat->金屬膜 #道具
+Charcoal->木炭 #道具
+Mystic Water->神秘水滴 #道具
+Miracle Seed->奇跡種子 #道具
+Magnet->磁鐵 #道具
+TwistedSpoon->彎曲的湯匙 #道具
+NeverMeltIce->不融冰 #道具
+Dragon Fang->龍之牙 #道具
+BlackGlasses->黑色眼鏡 #道具
+FairyFeather->妖精之羽 #道具
+Berserk Gene->破壞基因 #道具
+BrightPowder->光粉 #道具
+Quick Claw->先制之爪 #道具
+King's Rock->王者之證 #道具
+Amulet Coin->護符金幣 #道具
+Cleanse Tag->潔淨之符 #道具
+Smoke Ball->煙霧球 #道具
+Focus Band->氣勢頭帶 #道具
+Lucky Egg->幸運蛋 #道具
+Leftovers->吃剩的東西 #道具
+Soothe Bell->安撫之鈴 #道具
+Shell Bell->貝殼之鈴 #道具
+Muscle Band->力量頭帶 #道具
+Wise Glasses->博識眼鏡 #道具
+Expert Belt->達人帶 #道具
+Light Clay->光之黏土 #道具
+Life Orb->生命寶珠 #道具
+Focus Sash->氣勢披帶 #道具
+Metronome->節拍器 #道具
+Iron Ball->黑色鐵球 #道具
+Lagging Tail->後攻之尾 #道具
+Destiny Knot->紅線 #道具
+Grip Claw->緊纏鈎爪 #道具
+Shed Shell->美麗空殼 #道具
+Big Root->大根莖 #道具
+Eviolite->進化奇石 #道具
+Rocky Helmet->凸凸頭盔 #道具
+Air Balloon->氣球 #道具
+Red Card->紅牌 #道具
+Binding Band->緊綁束帶 #道具
+Eject Button->逃脫按鍵 #道具
+Assault Vest->突擊背心 #道具
+Throat Spray->爽喉噴霧 #道具
+Eject Pack->避難背包 #道具
+BlundrPolicy->打空保險 #道具
+Room Service->客房服務 #道具
+Clear Amulet->清淨墜飾 #道具
+Mirror Herb->模仿香草 #道具
+PunchinGlove->拳擊手套 #道具
+Covert Cloak->密探斗篷 #道具
+Loaded Dice->老千骰子 #道具
+Light Ball->電氣球 #道具
+Thick Club->粗骨頭 #道具
+Lucky Punch->吉利拳 #道具
+Metal Powder->金屬粉 #道具
+Quick Powder->速度粉 #道具
+Scope Lens->焦點鏡 #道具
+Wide Lens->廣角鏡 #道具
+Zoom Lens->對焦鏡 #道具
+Mental Herb->心靈香草 #道具
+Power Herb->強力香草 #道具
+White Herb->白色香草 #道具
+Damp Rock->潮濕岩石 #道具
+Heat Rock->熾熱岩石 #道具
+Smooth Rock->沙沙岩石 #道具
+Icy Rock->冰冷岩石 #道具
+Choice Band->講究頭帶 #道具
+Choice Scarf->講究圍巾 #道具
+Choice Specs->講究眼鏡 #道具
+Flame Orb->火焰寶珠 #道具
+Toxic Orb->劇毒寶珠 #道具
+Black Sludge->黑色污泥 #道具
+Macho Brace->強制鍛鍊器 #道具
+Power Weight->力量負重 #道具
+Power Bracer->力量護腕 #道具
+Power Belt->力量腰帶 #道具
+Power Lens->力量鏡 #道具
+Power Band->力量束帶 #道具
+Power Anklet->力量護踝 #道具
+Dragon Scale->龍之鱗片 #道具
+Upgrade->升級資料 #道具
+Dubious Disc->可疑修正檔 #道具
+Protector->護具 #道具
+Electirizer->電力增幅器 #道具
+Magmarizer->熔岩增幅器 #道具
+Razor Fang->銳利之牙 #道具
+Razor Claw->銳利之爪 #道具
+Oval Stone->渾圓之石 #道具
+Linking Cord->聯繫繩 #道具
+Silver Leaf->銀色葉子 #道具
+Gold Leaf->金色葉子 #道具
+Bottle Cap->銀色王冠 #道具
+Nugget->金珠 #道具
+Big Nugget->巨大金珠 #道具
+TinyMushroom->小蘑菇 #道具
+Big Mushroom->大蘑菇 #道具
+BalmMushroom->芳香蘑菇 #道具
+Pearl->珍珠 #道具
+Big Pearl->大珍珠 #道具
+Pearl String->丸子珍珠 #道具
+Stardust->星星沙子 #道具
+Star Piece->星星碎片 #道具
+Brick Piece->碎瓦片 #道具
+Rare Bone->貴重骨頭 #道具
+SlowpokeTail->美味尾巴 #道具
+Helix Fossil->貝殼化石 #道具
+Dome Fossil->甲殼化石 #道具
+Old Amber->秘密琥珀 #道具
+Flower Mail->花案郵件 #道具
+Surf Mail->衝浪郵件 #道具
+LiteBlueMail->水色郵件 #道具
+PortraitMail->肖像郵件 #道具
+Lovely Mail->可愛郵件 #道具
+Eon Mail->伊布郵件 #道具
+Morph Mail->變身郵件 #道具
+BlueSky Mail->藍天郵件 #道具
+Music Mail->音符郵件 #道具
+Mirage Mail->夢幻郵件 #道具
+Leek->大蔥 #道具，寶可夢改造版原創，普通的大蔥，賣價低
+Mint Leaf->薄荷嫩枝 #道具，寶可夢改造版原創，芬芳的薄荷嫩枝，收藏用
+Armor Suit->鎧甲 #道具，寶可夢改造版原創，給寶可夢穿的鎧甲
+Odd Souvenir->奇怪的紀念品 #道具，寶可夢改造版原創，遠方帶回的裝飾品
+Pewter Crunch->深灰仙貝 #道具，寶可夢改造版原創，效果為消除全部異常狀態
+Ability Cap->特性轉換器 #道具，寶可夢改造版原創，效果為切換寶可夢特性，勿與特性膠囊混淆
+Weak Policy->弱點保險 #道具
+Safe Goggles->防塵護目鏡 #道具
+Protect Pads->部位護具 #道具
+Heavy Boots->厚底靴 #道具
