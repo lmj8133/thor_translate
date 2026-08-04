@@ -23,6 +23,11 @@ fi
 # of uptime cannot fill the flash; env.sh may override any of these.
 export LOG_FILE="${LOG_FILE:-$DIR/proxy-app.log}"
 
+# Each cloud smoke test costs one request of that model's daily quota, and
+# Android restarts this service routinely - skip them on-device; the first
+# real request performs the same detection against real traffic.
+export STARTUP_SMOKE="${STARTUP_SMOKE:-0}"
+
 # Glossary selection is per-request via PT's model picker; a default table
 # is opt-in only (export GLOSSARY_PATH in env.sh if you want one).
 # 127.0.0.1: reachable by PlayTranslate on this device, invisible to the LAN.

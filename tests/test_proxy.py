@@ -6,6 +6,7 @@ Upstream (Ollama) calls are intercepted by monkeypatching
 """
 
 import json
+import time
 from pathlib import Path
 
 import httpx
@@ -26,8 +27,10 @@ class FakeUpstream:
         self.status = 200
         self.content = "大吾先生在哪里？"
         self.raw_body: str | None = None
+        self.calls = 0
 
     async def post(self, path: str, payload: dict) -> httpx.Response:
+        self.calls += 1
         self.path = path
         self.payload = payload
         if self.raw_body is not None:
@@ -57,7 +60,9 @@ class FakeCloud:
         self.timeouts.append(read_timeout)
         status, content = self.replies[min(len(self.payloads) - 1, len(self.replies) - 1)]
         if status != 200:
-            return httpx.Response(status, text="quota exceeded")
+            # An empty content stands in for today's generic body; tests that
+            # exercise the PerDay quota marking supply a real body instead.
+            return httpx.Response(status, text=content or "quota exceeded")
         return httpx.Response(
             status,
             json={
@@ -75,6 +80,23 @@ def _local_only_by_default(monkeypatch):
     # Keep the pre-cloud tests deterministic regardless of the dev machine's
     # environment; cloud tests opt in via the `cloud_chain` fixture.
     monkeypatch.setattr(main, "GEMINI_API_KEY", "")
+    # Module-global state must not bleed between tests: the response cache is
+    # off by default (cache tests opt in via `cache_on`) and the negative
+    # memory / recent-source dicts start empty.
+    monkeypatch.setattr(main, "TRANSLATION_CACHE_SIZE", 0)
+    monkeypatch.setattr(main, "_translation_cache", main.OrderedDict())
+    monkeypatch.setattr(main, "_cache_stats", {"requests": 0, "hits": 0, "repeat_misses": 0})
+    monkeypatch.setattr(main, "_model_exhausted_day", {})
+    monkeypatch.setattr(main, "_unrecognized_429_day", {})
+    monkeypatch.setattr(main, "_model_strikes", {})
+    monkeypatch.setattr(main, "_model_strike_at", {})
+    monkeypatch.setattr(main, "_model_cooldown_until", {})
+    monkeypatch.setattr(main, "_recent_sources", {})
+
+
+@pytest.fixture
+def cache_on(monkeypatch):
+    monkeypatch.setattr(main, "TRANSLATION_CACHE_SIZE", 8)
 
 
 @pytest.fixture
@@ -251,10 +273,10 @@ def test_continues_into_next_box_needs_a_dangling_grammar_ending():
     assert not sakura.continues_into_next_box("いるよ！")
 
 
-async def test_stale_context_line_is_not_joined(client, upstream, glossary_file, monkeypatch):
+async def test_stale_context_line_is_not_joined(client, upstream, glossary_file):
     # A dangling-looking line the proxy did not just translate (e.g. a caption
-    # lingering in PT's context) is history only, never joined.
-    monkeypatch.setattr(main, "_recent_sources", {})
+    # lingering in PT's context) is history only, never joined; the autouse
+    # fixture guarantees a fresh _recent_sources.
     resp = await client.post(
         "/v1/chat/completions",
         json=pt_request("きたんだ！", context=[("たのまれて", "被拜託")]),
@@ -656,3 +678,248 @@ async def test_models_lists_glossaries_behind_bearer(client, tmp_path, monkeypat
     assert keyed.status_code == 200
     # The picker menu doubles as the game selector: ids are glossary names.
     assert [model["id"] for model in keyed.json()["data"]] == ["dq7", "pokemon-oras"]
+
+
+# The Gemini OpenAI-compat endpoint wraps the error in a JSON array; captured
+# from a real exhausted-quota reply on 2026-08-04.
+PERDAY_429_BODY = json.dumps(
+    [
+        {
+            "error": {
+                "code": 429,
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
+                        ],
+                    }
+                ],
+            }
+        }
+    ]
+)
+
+
+class _NoOllama:
+    """Stands in for the Ollama client so startup checks stay socket-free."""
+
+    async def post(self, path, json=None):
+        raise httpx.ConnectError("no local backend in tests")
+
+
+async def test_perday_429_benches_the_model_for_the_day(client, cloud_chain, upstream, glossary_file):
+    # cloud-a returns a PerDay quota 429: it must not be probed again today,
+    # even after the rescuer later fails (a plain 429 would be re-probed —
+    # that fail-open behavior is pinned by test_failover_is_sticky...).
+    cloud_chain.replies = [(429, PERDAY_429_BODY), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
+
+    cloud_chain.payloads.clear()
+    cloud_chain.replies = [(500, "boom")]
+    upstream.content = "本地接手"
+    resp = await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert resp.status_code == 200
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-b"]
+
+
+async def test_plain_429_does_not_mark_the_model(client, cloud_chain, upstream, glossary_file):
+    # Fail-open: a 429 without PerDay evidence changes nothing.
+    cloud_chain.replies = [(429, ""), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert main._model_exhausted_day == {}
+
+
+async def test_perminute_mention_does_not_mark_the_model(client, cloud_chain, upstream, glossary_file):
+    # A burst 429 can cite the minute quota while mentioning the daily limit;
+    # benching for hours on that evidence would be wrong.
+    body = '{"violations": [{"quotaId": "...PerMinute..."}, {"quotaId": "...PerDay..."}]}'
+    cloud_chain.replies = [(429, body), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert main._model_exhausted_day == {}
+
+
+async def test_perday_mark_expires_after_the_refill(client, cloud_chain, upstream, glossary_file, monkeypatch):
+    cloud_chain.replies = [(429, PERDAY_429_BODY), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    marked_day = main._model_exhausted_day["cloud-a"]
+
+    monkeypatch.setattr(main, "_quota_day", lambda: marked_day + 1)
+    assert main._cloud_available("cloud-a", main._quota_day())
+    assert "cloud-a" not in main._model_exhausted_day  # stale mark pruned
+
+
+def test_transport_strikes_bench_after_limit():
+    for _ in range(main.CLOUD_STRIKE_LIMIT):
+        main._note_cloud_transport_error("m", started=time.monotonic())
+    assert not main._cloud_available("m", 0)
+    # The bench expires: pretend the cooldown deadline has passed.
+    main._model_cooldown_until["m"] = time.monotonic() - 1
+    assert main._cloud_available("m", 0)
+    assert "m" not in main._model_cooldown_until
+
+
+def test_overlapped_attempts_count_one_strike():
+    # Two requests in flight during one blip: the second failure STARTED
+    # before the first strike was recorded, so it must not double-count.
+    started = time.monotonic() - 1.0
+    main._note_cloud_transport_error("m", started)
+    main._note_cloud_transport_error("m", started)
+    assert main._model_strikes["m"] == 1
+
+
+async def test_all_stalling_clouds_get_benched(client, cloud_chain, upstream, glossary_file, monkeypatch):
+    # When EVERY cloud model keeps timing out, sticky failover alone never
+    # demotes them (demotion needs a cloud success); the strike cooldown must
+    # stop the per-request stall tax.
+    calls: list[str] = []
+
+    async def stall(payload, read_timeout=None):
+        calls.append(payload["model"])
+        raise httpx.ReadTimeout("stall")
+
+    monkeypatch.setattr(main, "post_cloud", stall)
+    upstream.content = "本地"
+    for _ in range(main.CLOUD_STRIKE_LIMIT):
+        resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+        assert resp.status_code == 200
+    benched = len(calls)
+    resp = await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert resp.status_code == 200
+    assert len(calls) == benched  # no further cloud probes while cooling down
+
+
+async def test_cloud_success_clears_strikes(client, cloud_chain, upstream, glossary_file):
+    main._model_strikes["cloud-a"] = 2
+    main._model_strike_at["cloud-a"] = time.monotonic()
+    cloud_chain.replies = [(200, "好")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert "cloud-a" not in main._model_strikes
+
+
+async def test_startup_smoke_seeds_the_skip_table(monkeypatch):
+    fake = FakeCloud()
+    fake.replies = [(429, PERDAY_429_BODY)]
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["cloud-a"])
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
+    await main._startup_checks()
+    assert main._model_exhausted_day == {"cloud-a": main._quota_day()}
+
+
+async def test_startup_smoke_can_be_disabled(monkeypatch):
+    fake = FakeCloud()
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "STARTUP_SMOKE", False)
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
+    await main._startup_checks()
+    assert fake.payloads == []
+
+
+async def test_cache_hit_skips_the_second_cloud_call(client, cache_on, cloud_chain, upstream, glossary_file):
+    cloud_chain.replies = [(200, "大吾先生在哪裡？")]
+    first = await client.post("/v1/chat/completions", json=pt_request("ダイゴさんは　どこ？"))
+    second = await client.post("/v1/chat/completions", json=pt_request("ダイゴさんは　どこ？"))
+    assert len(cloud_chain.payloads) == 1  # one upstream call for two requests
+    assert second.json() == first.json()  # usage replays verbatim on a hit
+    assert second.json()["usage"]["completion_tokens"] == 8
+
+
+async def test_cache_misses_on_different_history(client, cache_on, cloud_chain, upstream, glossary_file):
+    # Same line under different context may translate differently — the exact
+    # key includes history, so this is two upstream calls, not a hit.
+    cloud_chain.replies = [(200, "譯文")]
+    await client.post(
+        "/v1/chat/completions", json=pt_request("はい", context=[("いくぞ！", "走吧")])
+    )
+    await client.post(
+        "/v1/chat/completions", json=pt_request("はい", context=[("たべる？", "要吃嗎？")])
+    )
+    assert len(cloud_chain.payloads) == 2
+    assert main._cache_stats["repeat_misses"] == 1  # evidence for a looser key
+
+
+async def test_cache_key_includes_the_selected_glossary(client, cache_on, cloud_chain, upstream, glossary_file, tmp_path, monkeypatch):
+    game_dir = tmp_path / "games"
+    game_dir.mkdir()
+    (game_dir / "dq7.txt").write_text("ダイゴ->勇者大吾\n", encoding="utf-8")
+    monkeypatch.setattr(main, "GLOSSARY_DIR", str(game_dir))
+    monkeypatch.setattr(main, "_game_glossaries", {})
+    cloud_chain.replies = [(200, "譯文")]
+
+    await client.post("/v1/chat/completions", json=pt_request("ダイゴさんは　どこ？"))
+    dq7 = pt_request("ダイゴさんは　どこ？")
+    dq7["model"] = "dq7"
+    await client.post("/v1/chat/completions", json=dq7)
+    assert len(cloud_chain.payloads) == 2  # different matched terms, different key
+
+
+async def test_empty_reply_is_not_cached(client, cache_on, upstream, glossary_file):
+    upstream.content = ""
+    await client.post("/v1/chat/completions", json=pt_request("……"))
+    await client.post("/v1/chat/completions", json=pt_request("……"))
+    assert upstream.calls == 2  # a safety-filtered blank must not be pinned
+
+
+async def test_failures_are_not_cached(client, cache_on, cloud_chain, upstream, glossary_file):
+    # A batch that mismatches everywhere returns 400 — and the next attempt
+    # must reach the backends again rather than replay the failure.
+    cloud_chain.replies = [(200, "只有一行")]
+    upstream.content = "也只有一行"
+    for _ in range(2):
+        resp = await client.post(
+            "/v1/chat/completions", json=pt_batch_request(["ダイゴさん", "こんにちは"])
+        )
+        assert resp.status_code == 400
+    assert len(cloud_chain.payloads) == 4  # 2 models x 2 requests
+    assert upstream.calls == 2
+
+
+async def test_batch_with_blank_line_is_not_cached(client, cache_on, cloud_chain, upstream, glossary_file):
+    # A safety-filtered blank line inside an otherwise valid batch must not
+    # be pinned: the JSON wrapper string is never empty, so cacheability has
+    # to be judged on the raw lines before wrapping.
+    cloud_chain.replies = [(200, "大吾\n\n你好")]
+    for _ in range(2):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json=pt_batch_request(["ダイゴさん", "……", "こんにちは"]),
+        )
+        assert resp.status_code == 200
+    assert len(cloud_chain.payloads) == 2  # second batch reached the cloud again
+
+
+async def test_local_entries_expire_fast(client, cache_on, upstream, glossary_file):
+    # Local-quality answers stop serving once their short TTL lapses, so
+    # cloud recovery shows through within minutes.
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert upstream.calls == 1
+    key, (expires, body) = next(iter(main._translation_cache.items()))
+    assert expires - time.monotonic() <= main.TRANSLATION_CACHE_TTL_LOCAL_S + 1
+    main._translation_cache[key] = (time.monotonic() - 1, body)
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert upstream.calls == 2
+
+
+async def test_cache_hit_still_feeds_continuation_join(client, cache_on, upstream, glossary_file):
+    # A hit must keep the source in _recent_sources: the pinned contract is
+    # that only lines translated moments ago may join the next box.
+    await client.post("/v1/chat/completions", json=pt_request("ダイゴさんに　たのまれて"))
+    await client.post("/v1/chat/completions", json=pt_request("ダイゴさんに　たのまれて"))
+    assert upstream.calls == 1  # second one served from cache
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request(
+            "きみを　むかえに　きたんだ！",
+            context=[("ダイゴさんに　たのまれて", "被大吾先生拜託")],
+        ),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.endswith(
+        "将下面的文本从日文翻译成简体中文：\nダイゴさんに　たのまれてきみを　むかえに　きたんだ！"
+    )

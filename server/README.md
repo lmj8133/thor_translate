@@ -66,8 +66,10 @@ uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 | `OLLAMA_MODEL` | `sakura-galtransl-v3.7` | 本地兜底模型名 |
 | `GLOSSARY_PATH` | （未設 = 無預設表） | 「PT 沒選遊戲時」的預設術語表；選單路徑（Model 欄）不受影響 |
 | `GEMINI_API_KEY` | （未設 = 純本地模式） | 啟用雲端優先備援鏈 |
-| `CLOUD_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-a4b-it` | 依序嘗試的雲端模型 |
+| `CLOUD_MODELS` | `gemini-3.1-flash-lite,gemma-4-26b-a4b-it,gemini-3.5-flash-lite` | 依序嘗試的雲端模型 |
 | `CONTINUATION_JOIN` | `1` | 跨框續句拼接（`0` 關閉） |
+| `STARTUP_SMOKE` | `1`（Thor 啟動腳本設 `0`） | 啟動時逐模型煙霧測試；每次重啟花每模型 1 次當日額度 |
+| `TRANSLATION_CACHE_SIZE` | `256` | 完全相同 prompt 的回應快取條數（`0` 關閉） |
 
 ### 雲端備援鏈行為
 
@@ -76,6 +78,12 @@ uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 **黏性自動調棒**：每次請求直接打「上次成功的模型」，它失敗才往下試；**誰救場誰就成為新的第一棒**，直到它自己也開始失敗。所以某個模型服務端出問題時，你最多感覺到一句變慢（單句逾時 2.5s／批次 6s，可用 `CLOUD_READ_TIMEOUT_SINGLE`／`_BATCH` 調整），之後系統自動穩定在健康的模型上——不需要人工介入或改設定。領隊變更會寫 INFO log（`Cloud leader is now ...`）。重啟代理後回到預設順序重新學習。
 
 **每日重新洗牌**：免費額度於**太平洋午夜**（台灣約下午 3–4 點）重置，跨過該時點時代理清空領隊記憶，下一句重新從最偏好的模型試起。不分降級原因一律復位——額度型的主力剛好回滿；若當初是生病且還沒好，代價僅一句話的逾時（2.5 秒）就會再次自動換掉，不值得為此增加判斷邏輯。
+
+**額度耗盡直接跳過**：雲端回 429 且 body 帶 PerDay 額度證據時，該模型**當日直接跳過**（不再逐句白費探測），到太平洋午夜額度重置自動恢復；啟動煙霧測試的 429 也會預先寫入跳過表。沒有 PerDay 證據的 429 不標記（fail-open，維持原本的重試行為），但會寫一次 WARNING 留下 body 以便診斷。
+
+**連續逾時冷卻**：同一模型**連續 3 次**傳輸錯誤（逾時／斷線）→ 冷卻 60 秒再試（`CLOUD_STRIKE_LIMIT`／`CLOUD_STRIKE_COOLDOWN_S` 可調）。這是黏性調棒補不到的洞：全部雲端模型都在 stall 時沒有任何成功可以觸發降級，而**被放棄的 stall 呼叫在 Google 端照樣計費完整 input tokens、照扣當日額度**——2026-08-03 深夜的額度爆量正是這樣燒掉的。
+
+**回應快取**：prompt 完全相同（原文＋前文＋命中術語都一致）的請求，1 小時內直接回放快取，不再打雲端；本地 Sakura 兜底的答案只留 2 分鐘，雲端恢復後儘快換回高品質譯文。空回應與失敗一律不快取（批次行數不符的 400 仍會觸發 PT 逐句重試）。log 每 100 句印一行 `Cache stats`，其中 `repeated-source misses` 是「同一句短時間內重來、但前文不同以致快取沒中」的計數——這個數字是日後評估是否放寬快取鍵或加做 in-flight 合併的依據。
 
 - 啟動 log 會對每個雲端模型做煙霧測試（`Cloud model xxx: OK`）——若顯示 404 表示模型 id 有變，用 `CLOUD_MODELS` 環境變數修正（可用 `curl -H "Authorization: Bearer $GEMINI_API_KEY" https://generativelanguage.googleapis.com/v1beta/openai/models` 查現行清單）
 - 每次實際發生降級都會寫 WARNING log，可觀察額度消耗情形
