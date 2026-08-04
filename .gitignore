@@ -1,3 +1,5 @@
 .venv*/
 __pycache__/
 *.pyc
+# API keys live here on both the Mac and the Thor - never commit it.
+env.sh

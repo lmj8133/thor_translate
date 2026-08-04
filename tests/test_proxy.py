@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from server.proxy import main, sakura
+from server.proxy import cloud, main, sakura
 from server.proxy.glossary import Glossary, GlossaryError
 
 GLOSSARY_TEXT = "ダイゴ->大吾 #人名\nポケモン->寶可夢\nこうもく->項目\n"
@@ -53,11 +53,21 @@ class FakeCloud:
     def __init__(self):
         self.payloads: list[dict] = []
         self.timeouts: list[float | None] = []
+        self.api_keys: list[str] = []
+        self.base_urls: list[str] = []
         self.replies: list[tuple[int, str]] = [(200, "雲端譯文")]
 
-    async def post(self, payload: dict, read_timeout: float | None = None) -> httpx.Response:
+    async def post(
+        self,
+        payload: dict,
+        read_timeout: float | None = None,
+        api_key: str = "",
+        base_url: str = "",
+    ) -> httpx.Response:
         self.payloads.append(payload)
         self.timeouts.append(read_timeout)
+        self.api_keys.append(api_key)
+        self.base_urls.append(base_url)
         status, content = self.replies[min(len(self.payloads) - 1, len(self.replies) - 1)]
         if status != 200:
             # An empty content stands in for today's generic body; tests that
@@ -80,18 +90,20 @@ def _local_only_by_default(monkeypatch):
     # Keep the pre-cloud tests deterministic regardless of the dev machine's
     # environment; cloud tests opt in via the `cloud_chain` fixture.
     monkeypatch.setattr(main, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", "")
+    monkeypatch.setattr(main, "CLOUD_ENDPOINTS", "")
     # Module-global state must not bleed between tests: the response cache is
     # off by default (cache tests opt in via `cache_on`) and the negative
     # memory / recent-source dicts start empty.
     monkeypatch.setattr(main, "TRANSLATION_CACHE_SIZE", 0)
     monkeypatch.setattr(main, "_translation_cache", main.OrderedDict())
     monkeypatch.setattr(main, "_cache_stats", {"requests": 0, "hits": 0, "repeat_misses": 0})
-    monkeypatch.setattr(main, "_model_exhausted_day", {})
-    monkeypatch.setattr(main, "_unrecognized_429_day", {})
+    monkeypatch.setattr(main, "_quota_backoff_s", {})
     monkeypatch.setattr(main, "_model_strikes", {})
     monkeypatch.setattr(main, "_model_strike_at", {})
     monkeypatch.setattr(main, "_model_cooldown_until", {})
     monkeypatch.setattr(main, "_recent_sources", {})
+    monkeypatch.setattr(main, "_cloud_clients", {})
 
 
 @pytest.fixture
@@ -564,8 +576,9 @@ async def test_cloud_429_slides_to_next_model(client, cloud_chain, upstream, glo
 
 
 async def test_failover_is_sticky_until_the_leader_itself_fails(client, cloud_chain, upstream, glossary_file):
+    # 500s exercise the pure reordering: unlike 429s they carry no cooldown.
     # cloud-a fails once: cloud-b rescues the request and becomes the leader.
-    cloud_chain.replies = [(429, ""), (200, "b 接手")]
+    cloud_chain.replies = [(500, "boom"), (200, "b 接手")]
     await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
     assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
 
@@ -579,7 +592,7 @@ async def test_failover_is_sticky_until_the_leader_itself_fails(client, cloud_ch
 
     # Only when the leader itself fails does the chain reach for cloud-a again.
     cloud_chain.payloads.clear()
-    cloud_chain.replies = [(429, ""), (200, "a 回鍋")]
+    cloud_chain.replies = [(500, "boom"), (200, "a 回鍋")]
     await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
     assert [p["model"] for p in cloud_chain.payloads] == ["cloud-b", "cloud-a"]
 
@@ -682,26 +695,6 @@ async def test_models_lists_glossaries_behind_bearer(client, tmp_path, monkeypat
 
 # The Gemini OpenAI-compat endpoint wraps the error in a JSON array; captured
 # from a real exhausted-quota reply on 2026-08-04.
-PERDAY_429_BODY = json.dumps(
-    [
-        {
-            "error": {
-                "code": 429,
-                "status": "RESOURCE_EXHAUSTED",
-                "details": [
-                    {
-                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
-                        "violations": [
-                            {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
-                        ],
-                    }
-                ],
-            }
-        }
-    ]
-)
-
-
 class _NoOllama:
     """Stands in for the Ollama client so startup checks stay socket-free."""
 
@@ -709,11 +702,11 @@ class _NoOllama:
         raise httpx.ConnectError("no local backend in tests")
 
 
-async def test_perday_429_benches_the_model_for_the_day(client, cloud_chain, upstream, glossary_file):
-    # cloud-a returns a PerDay quota 429: it must not be probed again today,
-    # even after the rescuer later fails (a plain 429 would be re-probed —
-    # that fail-open behavior is pinned by test_failover_is_sticky...).
-    cloud_chain.replies = [(429, PERDAY_429_BODY), (200, "b 接手")]
+async def test_429_benches_the_pair_for_its_cooldown(client, cloud_chain, upstream, glossary_file):
+    # Any 429 cools the pair down - provider-neutral, no body signature
+    # needed. Even after the rescuer later fails, the cooling pair is not
+    # re-probed; the request degrades to local instead.
+    cloud_chain.replies = [(429, ""), (200, "b 接手")]
     await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
     assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
 
@@ -725,49 +718,70 @@ async def test_perday_429_benches_the_model_for_the_day(client, cloud_chain, ups
     assert [p["model"] for p in cloud_chain.payloads] == ["cloud-b"]
 
 
-async def test_plain_429_does_not_mark_the_model(client, cloud_chain, upstream, glossary_file):
-    # Fail-open: a 429 without PerDay evidence changes nothing.
-    cloud_chain.replies = [(429, ""), (200, "b 接手")]
-    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
-    assert main._model_exhausted_day == {}
+def test_429_backoff_escalates_and_is_capped():
+    # No Retry-After hint: the base cooldown applies and doubles per repeat,
+    # so an exhausted daily quota converges to one probe per cap window.
+    pair = (main.Endpoint("u", "k", ("m",)), "m")
+    resp = httpx.Response(429, text="quota exceeded")
+    main._note_cloud_response(pair, resp)
+    first = main._model_cooldown_until[pair] - time.monotonic()
+    assert 0 < first <= main.CLOUD_429_COOLDOWN_S + 1
+    assert main._quota_backoff_s[pair] == main.CLOUD_429_COOLDOWN_S * 2
+    main._note_cloud_response(pair, resp)
+    assert main._quota_backoff_s[pair] == main.CLOUD_429_COOLDOWN_S * 4
+    main._quota_backoff_s[pair] = main.CLOUD_429_COOLDOWN_MAX_S
+    main._note_cloud_response(pair, resp)
+    capped = main._model_cooldown_until[pair] - time.monotonic()
+    assert capped <= main.CLOUD_429_COOLDOWN_MAX_S + 1
 
 
-async def test_perminute_mention_does_not_mark_the_model(client, cloud_chain, upstream, glossary_file):
-    # A burst 429 can cite the minute quota while mentioning the daily limit;
-    # benching for hours on that evidence would be wrong.
-    body = '{"violations": [{"quotaId": "...PerMinute..."}, {"quotaId": "...PerDay..."}]}'
-    cloud_chain.replies = [(429, body), (200, "b 接手")]
-    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
-    assert main._model_exhausted_day == {}
+def test_429_honors_the_providers_retry_after_hint():
+    # The hint may arrive as the standard header or in Gemini's body phrasing;
+    # either raises the cooldown floor above the escalating base.
+    header_pair = (main.Endpoint("u1", "k", ("m",)), "m")
+    resp = httpx.Response(429, headers={"retry-after": "600"}, text="slow down")
+    main._note_cloud_response(header_pair, resp)
+    assert main._model_cooldown_until[header_pair] - time.monotonic() > 500
+
+    body_pair = (main.Endpoint("u2", "k", ("m",)), "m")
+    resp = httpx.Response(429, text="You exceeded your quota. Please retry in 400.5s.")
+    main._note_cloud_response(body_pair, resp)
+    assert main._model_cooldown_until[body_pair] - time.monotonic() > 300
 
 
-async def test_perday_mark_expires_after_the_refill(client, cloud_chain, upstream, glossary_file, monkeypatch):
-    cloud_chain.replies = [(429, PERDAY_429_BODY), (200, "b 接手")]
-    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
-    marked_day = main._model_exhausted_day["cloud-a"]
-
-    monkeypatch.setattr(main, "_quota_day", lambda: marked_day + 1)
-    assert main._cloud_available("cloud-a", main._quota_day())
-    assert "cloud-a" not in main._model_exhausted_day  # stale mark pruned
+def test_quota_day_rollover_clears_the_benches(monkeypatch):
+    # Fresh day, fresh chances: crossing the leader's daily boundary expires
+    # every 429 backoff and strike bench alongside the leader itself.
+    monkeypatch.setattr(main, "CLOUD_ENDPOINTS", "u|k|m")
+    pair = (main._cloud_endpoints()[0], "m")
+    main._model_cooldown_until[pair] = time.monotonic() + 999
+    main._quota_backoff_s[pair] = 240.0
+    monkeypatch.setattr(main, "_cloud_leader", pair)
+    monkeypatch.setattr(main, "_leader_quota_day", main._quota_day() - 1)
+    main._cloud_chain()
+    assert main._model_cooldown_until == {}
+    assert main._quota_backoff_s == {}
 
 
 def test_transport_strikes_bench_after_limit():
+    pair = ("k", "m")
     for _ in range(main.CLOUD_STRIKE_LIMIT):
-        main._note_cloud_transport_error("m", started=time.monotonic())
-    assert not main._cloud_available("m", 0)
+        main._note_cloud_transport_error(pair, started=time.monotonic())
+    assert not main._cloud_available(pair)
     # The bench expires: pretend the cooldown deadline has passed.
-    main._model_cooldown_until["m"] = time.monotonic() - 1
-    assert main._cloud_available("m", 0)
-    assert "m" not in main._model_cooldown_until
+    main._model_cooldown_until[pair] = time.monotonic() - 1
+    assert main._cloud_available(pair)
+    assert pair not in main._model_cooldown_until
 
 
 def test_overlapped_attempts_count_one_strike():
     # Two requests in flight during one blip: the second failure STARTED
     # before the first strike was recorded, so it must not double-count.
+    pair = ("k", "m")
     started = time.monotonic() - 1.0
-    main._note_cloud_transport_error("m", started)
-    main._note_cloud_transport_error("m", started)
-    assert main._model_strikes["m"] == 1
+    main._note_cloud_transport_error(pair, started)
+    main._note_cloud_transport_error(pair, started)
+    assert main._model_strikes[pair] == 1
 
 
 async def test_all_stalling_clouds_get_benched(client, cloud_chain, upstream, glossary_file, monkeypatch):
@@ -776,7 +790,7 @@ async def test_all_stalling_clouds_get_benched(client, cloud_chain, upstream, gl
     # stop the per-request stall tax.
     calls: list[str] = []
 
-    async def stall(payload, read_timeout=None):
+    async def stall(payload, read_timeout=None, api_key="", base_url=""):
         calls.append(payload["model"])
         raise httpx.ReadTimeout("stall")
 
@@ -792,22 +806,24 @@ async def test_all_stalling_clouds_get_benched(client, cloud_chain, upstream, gl
 
 
 async def test_cloud_success_clears_strikes(client, cloud_chain, upstream, glossary_file):
-    main._model_strikes["cloud-a"] = 2
-    main._model_strike_at["cloud-a"] = time.monotonic()
+    pair = (main._cloud_endpoints()[0], "cloud-a")
+    main._model_strikes[pair] = 2
+    main._model_strike_at[pair] = time.monotonic()
     cloud_chain.replies = [(200, "好")]
     await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
-    assert "cloud-a" not in main._model_strikes
+    assert pair not in main._model_strikes
 
 
-async def test_startup_smoke_seeds_the_skip_table(monkeypatch):
+async def test_startup_smoke_seeds_the_cooldown_table(monkeypatch):
     fake = FakeCloud()
-    fake.replies = [(429, PERDAY_429_BODY)]
+    fake.replies = [(429, "quota exceeded")]
     monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(main, "CLOUD_MODELS", ["cloud-a"])
     monkeypatch.setattr(main, "post_cloud", fake.post)
     monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
     await main._startup_checks()
-    assert main._model_exhausted_day == {"cloud-a": main._quota_day()}
+    pair = (main._cloud_endpoints()[0], "cloud-a")
+    assert pair in main._model_cooldown_until
 
 
 async def test_startup_smoke_can_be_disabled(monkeypatch):
@@ -923,3 +939,504 @@ async def test_cache_hit_still_feeds_continuation_join(client, cache_on, upstrea
     assert prompt.endswith(
         "将下面的文本从日文翻译成简体中文：\nダイゴさんに　たのまれてきみを　むかえに　きたんだ！"
     )
+
+
+@pytest.fixture
+def two_key_chain(monkeypatch):
+    fake = FakeCloud()
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", "free-key,paid-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["cloud-a", "cloud-b"])
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_cloud_leader", None)
+    monkeypatch.setattr(main, "_leader_quota_day", None)
+    return fake
+
+
+def test_cloud_keys_parsing(monkeypatch):
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", "")
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "solo")
+    assert main._cloud_keys() == ["solo"]
+    # The chain wins over the single key; whitespace and empties are dropped.
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", " a , ,b ")
+    assert main._cloud_keys() == ["a", "b"]
+    # A pasted-twice key must not double every probe and strike.
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", "a,a,b")
+    assert main._cloud_keys() == ["a", "b"]
+    # A chain that parses to nothing falls back to the single key.
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", " , ")
+    assert main._cloud_keys() == ["solo"]
+
+
+async def test_key_chain_is_key_major(client, two_key_chain, upstream, glossary_file):
+    # The first key's whole model list is tried before the second key sees
+    # any traffic - a free key is fully spent before a billed key costs.
+    two_key_chain.replies = [(429, ""), (429, ""), (200, "第二把 key 接手")]
+    resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "第二把 key 接手"
+    attempts = list(zip(two_key_chain.api_keys, [p["model"] for p in two_key_chain.payloads]))
+    assert attempts == [
+        ("free-key", "cloud-a"),
+        ("free-key", "cloud-b"),
+        ("paid-key", "cloud-a"),
+    ]
+
+
+async def test_429_exhaustion_slides_to_the_next_key(client, two_key_chain, upstream, glossary_file):
+    # Both first-key models 429-out: the rescuing pair becomes leader and
+    # later requests go straight to the second key with zero re-probes while
+    # the cooldowns hold.
+    two_key_chain.replies = [
+        (429, ""),
+        (429, ""),
+        (200, "第二把 key 接手"),
+    ]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+
+    two_key_chain.payloads.clear()
+    two_key_chain.api_keys.clear()
+    two_key_chain.replies = [(200, "繼續")]
+    await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert two_key_chain.api_keys == ["paid-key"]
+    free_endpoint = main._cloud_endpoints()[0]
+    assert (free_endpoint, "cloud-a") in main._model_cooldown_until
+    assert (free_endpoint, "cloud-b") in main._model_cooldown_until
+
+
+async def test_exhausted_key_skipped_even_when_leader_fails(client, two_key_chain, upstream, glossary_file):
+    # While the first key's pairs are cooling down, a failure on the second
+    # key must not send traffic back to the first - it falls through to local.
+    two_key_chain.replies = [
+        (429, ""),
+        (429, ""),
+        (200, "第二把 key 接手"),
+    ]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+
+    two_key_chain.payloads.clear()
+    two_key_chain.api_keys.clear()
+    two_key_chain.replies = [(500, "boom")]
+    upstream.content = "本地接手"
+    resp = await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "本地接手"
+    assert set(two_key_chain.api_keys) == {"paid-key"}  # free-key never re-probed
+
+
+async def test_transient_blip_does_not_pin_traffic_to_the_paid_key(client, two_key_chain, upstream, glossary_file):
+    # Transient 500s on the free pairs let the paid key rescue - but the very
+    # next request must try the free key again: the leader floats only within
+    # its own key's segment, so one hiccup cannot convert the rest of the day
+    # to billed traffic. (429s are different: they carry a cooldown.)
+    two_key_chain.replies = [(500, "boom"), (500, "boom"), (200, "第二把 key 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+
+    two_key_chain.payloads.clear()
+    two_key_chain.api_keys.clear()
+    two_key_chain.replies = [(200, "免費恢復")]
+    resp = await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert resp.json()["choices"][0]["message"]["content"] == "免費恢復"
+    assert two_key_chain.api_keys == ["free-key"]
+
+
+async def test_midnight_straddling_reply_still_resets_leader(client, cloud_chain, upstream, glossary_file, monkeypatch):
+    # A success whose reply lands after Pacific midnight must stamp the day
+    # its attempt began: stamping the response day would swallow the next
+    # rollover reset and the preferred model would not lead the fresh day.
+    cloud_chain.replies = [(429, ""), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    day_n = main._leader_quota_day
+    current = {"day": day_n}
+    monkeypatch.setattr(main, "_quota_day", lambda: current["day"])
+
+    real_post = cloud_chain.post
+
+    async def straddling_post(payload, read_timeout=None, api_key="", base_url=""):
+        resp = await real_post(payload, read_timeout, api_key=api_key, base_url=base_url)
+        current["day"] = day_n + 1  # midnight passes while the reply is in flight
+        return resp
+
+    monkeypatch.setattr(main, "post_cloud", straddling_post)
+    cloud_chain.payloads.clear()
+    cloud_chain.replies = [(200, "b 跨午夜")]
+    await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+
+    monkeypatch.setattr(main, "post_cloud", cloud_chain.post)
+    cloud_chain.payloads.clear()
+    cloud_chain.replies = [(200, "a 回鍋")]
+    await client.post("/v1/chat/completions", json=pt_request("はい"))
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a"]
+
+
+async def test_error_labels_are_positional_not_key_material(client, two_key_chain, upstream, glossary_file, monkeypatch):
+    # Failure labels flow into the client-visible 502 body: positional labels
+    # only, never the key material itself.
+    two_key_chain.replies = [(500, "boom")]
+
+    async def no_local(path, payload):
+        raise httpx.ConnectError("no local")
+
+    monkeypatch.setattr(main, "post_upstream", no_local)
+    resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert resp.status_code == 502
+    message = resp.json()["error"]["message"]
+    assert "key1/cloud-a" in message
+    assert "key2/cloud-b" in message
+    assert "free-key" not in message
+    assert "paid-key" not in message
+
+
+async def test_cloud_clients_bake_one_client_per_endpoint():
+    # The same key under two URLs (and two keys under one URL) must get
+    # distinct clients, each with its own base URL and baked-in credential.
+    try:
+        a_k1 = main._get_cloud_client("https://a.example/v1", "k1")
+        b_k1 = main._get_cloud_client("https://b.example/v1", "k1")
+        a_k2 = main._get_cloud_client("https://a.example/v1", "k2")
+        assert a_k1 is not b_k1
+        assert a_k1 is not a_k2
+        # httpx normalizes the base URL with a trailing slash.
+        assert str(a_k1.base_url) == "https://a.example/v1/"
+        assert str(b_k1.base_url) == "https://b.example/v1/"
+        assert a_k1.headers["authorization"] == "Bearer k1"
+        assert a_k2.headers["authorization"] == "Bearer k2"
+        assert main._get_cloud_client("https://a.example/v1", "k1") is a_k1  # cached
+    finally:
+        for cloud_client in main._cloud_clients.values():
+            await cloud_client.aclose()
+        main._cloud_clients.clear()
+
+
+async def test_startup_smoke_probes_each_pair_with_its_own_key(monkeypatch):
+    # key2's probe must carry key2's credential: probing with key1 would seed
+    # cooldown entries under the wrong pair.
+    fake = FakeCloud()
+    fake.replies = [(429, "quota exceeded"), (200, "ok")]
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", "k1,k2")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["m"])
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
+    await main._startup_checks()
+    assert fake.api_keys == ["k1", "k2"]
+    assert list(main._model_cooldown_until) == [(main._cloud_endpoints()[0], "m")]
+
+
+def test_cloud_endpoints_parsing(monkeypatch):
+    monkeypatch.setattr(main, "CLOUD_URL", "https://gemini.example/v1")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["g1", "g2"])
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "solo")
+    # Unset: endpoints come from the legacy key vars + the globals.
+    assert main._cloud_endpoints() == [
+        main.Endpoint("https://gemini.example/v1", "solo", ("g1", "g2"))
+    ]
+    # Strictly symmetric entries: whitespace around entries, fields, and
+    # models is trimmed; blank entries are dropped; the one allowed empty
+    # field is an explicit empty key (keyless self-hosted servers).
+    monkeypatch.setattr(
+        main,
+        "CLOUD_ENDPOINTS",
+        " https://api.groq.com/openai/v1 | gsk_1 | qwen/qwen3.6-27b ; llama-fast ,"
+        " https://self.example/v1||local-model , ,",
+    )
+    assert main._cloud_endpoints() == [
+        main.Endpoint(
+            "https://api.groq.com/openai/v1", "gsk_1", ("qwen/qwen3.6-27b", "llama-fast")
+        ),
+        main.Endpoint("https://self.example/v1", "", ("local-model",)),
+    ]
+    # Identical (url, key) endpoints collapse to their first occurrence.
+    monkeypatch.setattr(main, "CLOUD_ENDPOINTS", "u|k|m1,u|k|m2")
+    assert main._cloud_endpoints() == [main.Endpoint("u", "k", ("m1",))]
+
+
+def test_cloud_endpoints_malformed_entries_abort(monkeypatch):
+    # Nothing inherits: a bare key, a missing URL, a missing model list, and
+    # a two-field entry are config errors that must stop the proxy loudly,
+    # naming the offending entry's position.
+    for broken, position in [
+        ("u|k|m,bare-key", 2),
+        ("|k|m", 1),
+        ("u|k|m,u2|k2|", 2),
+        ("u|k", 1),
+    ]:
+        monkeypatch.setattr(main, "CLOUD_ENDPOINTS", broken)
+        with pytest.raises(ValueError, match=f"entry {position}"):
+            main._cloud_endpoints()
+
+
+def test_key_vars_build_the_same_chain_as_before(monkeypatch):
+    # Back-compat: a GEMINI_API_KEYS-only config must yield the exact
+    # key-major attempt sequence of the key chain, every pair on CLOUD_URL.
+    monkeypatch.setattr(main, "GEMINI_API_KEYS", "free-key,paid-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["cloud-a", "cloud-b"])
+    monkeypatch.setattr(main, "_cloud_leader", None)
+    monkeypatch.setattr(main, "_leader_quota_day", None)
+    chain = main._cloud_chain()
+    assert [(endpoint.key, model) for endpoint, model in chain] == [
+        ("free-key", "cloud-a"),
+        ("free-key", "cloud-b"),
+        ("paid-key", "cloud-a"),
+        ("paid-key", "cloud-b"),
+    ]
+    assert {endpoint.url for endpoint, _ in chain} == {main.CLOUD_URL}
+
+
+@pytest.fixture
+def two_endpoint_chain(monkeypatch):
+    """Two providers with different URLs and model lists. Endpoint B reuses
+    endpoint A's key string on purpose: state keyed by (key, model) instead
+    of endpoint identity would collide and fail these tests."""
+    fake = FakeCloud()
+    monkeypatch.setattr(
+        main,
+        "CLOUD_ENDPOINTS",
+        "https://a.example/v1|shared-key|a1;a2,https://b.example/v1|shared-key|b1",
+    )
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_cloud_leader", None)
+    monkeypatch.setattr(main, "_leader_quota_day", None)
+    return fake
+
+
+async def test_endpoint_chain_is_endpoint_major(client, two_endpoint_chain, upstream, glossary_file):
+    # Endpoint A's whole model list is tried before endpoint B sees any
+    # traffic, and every attempt carries its own endpoint's base URL.
+    two_endpoint_chain.replies = [(500, "boom"), (500, "boom"), (200, "B 端點接手")]
+    resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "B 端點接手"
+    attempts = list(
+        zip(two_endpoint_chain.base_urls, [p["model"] for p in two_endpoint_chain.payloads])
+    )
+    assert attempts == [
+        ("https://a.example/v1", "a1"),
+        ("https://a.example/v1", "a2"),
+        ("https://b.example/v1", "b1"),
+    ]
+    assert two_endpoint_chain.api_keys == ["shared-key"] * 3
+
+    # 500s carry no cooldown: the very next request retries endpoint A first —
+    # the rescuing leader floats only within its own endpoint's segment.
+    two_endpoint_chain.payloads.clear()
+    two_endpoint_chain.base_urls.clear()
+    two_endpoint_chain.replies = [(200, "A 恢復")]
+    resp = await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert resp.json()["choices"][0]["message"]["content"] == "A 恢復"
+    assert two_endpoint_chain.base_urls == ["https://a.example/v1"]
+
+
+async def test_post_cloud_routes_to_the_endpoint_client(monkeypatch):
+    # The real post_cloud must pick the client for the attempt's (url, key) -
+    # not the first endpoint's, and an empty base_url keeps the global default.
+    calls: list[tuple[str, str]] = []
+
+    class _StubClient:
+        async def post(self, path, json=None, timeout=None):
+            return httpx.Response(200, text="ok")
+
+    def record_get(base_url, api_key):
+        calls.append((base_url, api_key))
+        return _StubClient()
+
+    monkeypatch.setattr(main, "_get_cloud_client", record_get)
+    await main.post_cloud({}, api_key="k", base_url="https://b.example/v1")
+    await main.post_cloud({}, api_key="k")
+    assert calls == [("https://b.example/v1", "k"), (main.CLOUD_URL, "k")]
+
+
+async def test_429_benches_the_model_on_one_endpoint_only(client, upstream, glossary_file, monkeypatch):
+    # The same model name (and even the same key string) under two base URLs:
+    # a 429 cooldown on endpoint A's copy must not bench endpoint B's.
+    fake = FakeCloud()
+    monkeypatch.setattr(
+        main,
+        "CLOUD_ENDPOINTS",
+        "https://a.example/v1|shared-key|m,https://b.example/v1|shared-key|m",
+    )
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_cloud_leader", None)
+    monkeypatch.setattr(main, "_leader_quota_day", None)
+    fake.replies = [(429, "quota exceeded"), (200, "B 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert fake.base_urls == ["https://a.example/v1", "https://b.example/v1"]
+    endpoint_a, endpoint_b = main._cloud_endpoints()
+    assert list(main._model_cooldown_until) == [(endpoint_a, "m")]
+    assert main._cloud_available((endpoint_b, "m"))
+
+    # Next request: A's copy is benched, B's copy still serves cloud traffic.
+    fake.payloads.clear()
+    fake.base_urls.clear()
+    fake.replies = [(200, "B 繼續")]
+    resp = await client.post("/v1/chat/completions", json=pt_request("さようなら"))
+    assert resp.json()["choices"][0]["message"]["content"] == "B 繼續"
+    assert fake.base_urls == ["https://b.example/v1"]
+
+
+async def test_endpoint_error_labels_hide_keys_and_urls(client, two_endpoint_chain, upstream, glossary_file, monkeypatch):
+    # Failure labels flow into the client-visible 502 body: positional labels
+    # only - never the key material, never the base URL (Cloudflare-style
+    # URLs embed an account id).
+    two_endpoint_chain.replies = [(500, "boom")]
+
+    async def no_local(path, payload):
+        raise httpx.ConnectError("no local")
+
+    monkeypatch.setattr(main, "post_upstream", no_local)
+    resp = await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    assert resp.status_code == 502
+    message = resp.json()["error"]["message"]
+    assert "key1/a1" in message
+    assert "key1/a2" in message
+    assert "key2/b1" in message
+    assert "shared-key" not in message
+    assert "a.example" not in message
+    assert "b.example" not in message
+
+
+async def test_startup_smoke_probes_each_endpoint_with_its_own_url(monkeypatch):
+    # Every (endpoint, model) pair is probed with that endpoint's key and URL
+    # and that endpoint's OWN model list, not the global CLOUD_MODELS.
+    fake = FakeCloud()
+    monkeypatch.setattr(
+        main,
+        "CLOUD_ENDPOINTS",
+        "https://a.example/v1|ka|a1;a2,https://b.example/v1|kb|b1",
+    )
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["unused-global"])
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
+    await main._startup_checks()
+    probes = list(zip(fake.base_urls, fake.api_keys, [p["model"] for p in fake.payloads]))
+    assert probes == [
+        ("https://a.example/v1", "ka", "a1"),
+        ("https://a.example/v1", "ka", "a2"),
+        ("https://b.example/v1", "kb", "b1"),
+    ]
+
+
+def test_strip_reasoning_drops_leaked_blocks():
+    # Closed blocks, the <thought> variant, and an unclosed block running to
+    # the end of the text are all reasoning leaks, not translation.
+    assert cloud.strip_reasoning("<think>plan...</think>大吾先生") == "大吾先生"
+    assert cloud.strip_reasoning("<thought>* Input: ...") == ""
+    assert cloud.strip_reasoning("大吾先生在哪裡？") == "大吾先生在哪裡？"
+
+
+def test_request_tweaks_are_keyed_by_provider_host():
+    assert cloud.request_tweaks("https://api.groq.com/openai/v1") == {
+        "reasoning_effort": "none"
+    }
+    assert cloud.request_tweaks("https://api.z.ai/api/paas/v4") == {
+        "thinking": {"type": "disabled"}
+    }
+    # Everyone else gets a clean body - Gemini and Groq 400 on foreign fields.
+    assert cloud.request_tweaks("https://generativelanguage.googleapis.com/v1beta/openai") == {}
+    assert cloud.request_tweaks("https://api.cloudflare.com/client/v4/accounts/x/ai/v1") == {}
+
+
+async def test_cloud_request_carries_the_hosts_own_tweaks(client, upstream, glossary_file, monkeypatch):
+    fake = FakeCloud()
+    monkeypatch.setattr(
+        main,
+        "CLOUD_ENDPOINTS",
+        "https://api.groq.com/openai/v1|gk|qwen,https://x.example/v1|xk|m",
+    )
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_cloud_leader", None)
+    monkeypatch.setattr(main, "_leader_quota_day", None)
+    fake.replies = [(500, "boom"), (200, "譯文")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    groq_body, other_body = fake.payloads
+    assert groq_body["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in other_body
+    assert "thinking" not in other_body
+
+
+async def test_leaked_reasoning_is_stripped_and_pure_reasoning_slides(client, cloud_chain, upstream, glossary_file):
+    # cloud-a leaks an unclosed reasoning block (no translation): the chain
+    # must slide on. cloud-b wraps its answer in a closed block: the proxy
+    # serves the stripped translation.
+    cloud_chain.replies = [
+        (200, "<think>\nHere's a thinking process...\n"),
+        (200, "<think>plan</think>大吾先生在哪裡？"),
+    ]
+    resp = await client.post("/v1/chat/completions", json=pt_request("ダイゴさんは　どこ？"))
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "大吾先生在哪裡？"
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
+
+
+def test_join_drops_the_scrolled_overlap():
+    # A box scrolled by one line: the surviving line reappears at the head of
+    # the current capture and must be translated exactly once.
+    joined, history = sakura.join_continuation(
+        [("ダイゴさんに　たのまれて", "被拜託")],
+        "たのまれて\nきみを　むかえに　きたんだ！",
+        {"ダイゴさんに　たのまれて"},
+    )
+    assert joined == "ダイゴさんに　たのまれて\nきみを　むかえに　きたんだ！"
+    assert history == []
+
+
+def test_join_keeps_a_coincidental_short_seam():
+    # Prefix ends on て and the new text genuinely starts with て: a
+    # one-character seam without a line boundary must not eat real text.
+    joined, _ = sakura.join_continuation(
+        [("ダイゴさんに　たのまれて", "被拜託")],
+        "てがみを　わたした",
+        {"ダイゴさんに　たのまれて"},
+    )
+    assert joined == "ダイゴさんに　たのまれててがみを　わたした"
+
+
+def test_join_accepts_a_short_overlap_at_a_line_boundary():
+    # A re-captured short line ends where its newline was - accepted even
+    # below the minimum seam length.
+    joined, _ = sakura.join_continuation(
+        [("やまへ　いくと", "去山上的話")],
+        "いくと\nたのしいぞ",
+        {"やまへ　いくと"},
+    )
+    assert joined == "やまへ　いくと\nたのしいぞ"
+
+
+async def test_scrolled_line_is_not_translated_twice(client, upstream, glossary_file):
+    # End-to-end: translate the first box, then a one-line-scrolled capture
+    # whose head repeats the first box's tail - the model input must contain
+    # the repeated text once.
+    await client.post("/v1/chat/completions", json=pt_request("ダイゴさんに　たのまれて"))
+    resp = await client.post(
+        "/v1/chat/completions",
+        json=pt_request(
+            "たのまれて\nきみを　むかえに　きたんだ！",
+            context=[("ダイゴさんに　たのまれて", "被大吾先生拜託")],
+        ),
+    )
+    assert resp.status_code == 200
+    prompt = upstream.payload["messages"][1]["content"]
+    assert prompt.endswith(
+        "将下面的文本从日文翻译成简体中文：\nダイゴさんに　たのまれて\\nきみを　むかえに　きたんだ！"
+    )
+    assert prompt.count("たのまれて") == 1  # the whole point: fed to the model once
+
+
+def test_untranslated_echo_detection():
+    assert cloud.is_untranslated_echo("ダイゴさんは　どこ？", "ダイゴさんは　どこ？")
+    # U+3000 differences do not disguise an echo.
+    assert cloud.is_untranslated_echo("ダイゴさんは　どこ？", "ダイゴさんはどこ？")
+    # Symbol-only lines legitimately translate to themselves.
+    assert not cloud.is_untranslated_echo("……", "……")
+    assert not cloud.is_untranslated_echo("ダイゴさんは　どこ？", "大吾先生在哪裡？")
+
+
+async def test_cloud_echo_slides_and_fullwidth_spaces_are_stripped(client, cloud_chain, upstream, glossary_file):
+    # cloud-a hands the Japanese back untranslated -> slide on; cloud-b keeps
+    # the source's U+3000 word gaps -> stripped before serving.
+    cloud_chain.replies = [
+        (200, "ダイゴさんは　どこ？"),
+        (200, "大吾先生　在　哪裡？"),
+    ]
+    resp = await client.post("/v1/chat/completions", json=pt_request("ダイゴさんは　どこ？"))
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "大吾先生在哪裡？"
+    assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]

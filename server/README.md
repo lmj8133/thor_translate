@@ -66,6 +66,8 @@ uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 | `OLLAMA_MODEL` | `sakura-galtransl-v3.7` | 本地兜底模型名 |
 | `GLOSSARY_PATH` | （未設 = 無預設表） | 「PT 沒選遊戲時」的預設術語表；選單路徑（Model 欄）不受影響 |
 | `GEMINI_API_KEY` | （未設 = 純本地模式） | 啟用雲端優先備援鏈 |
+| `GEMINI_API_KEYS` | （未設） | 逗號分隔的金鑰鏈，設了就蓋過 `GEMINI_API_KEY`；額度綁專案，故各 key 須屬不同專案才有意義 |
+| `CLOUD_ENDPOINTS` | （未設） | 多供應商端點鏈，設了就蓋過上面兩個金鑰變數；格式見「多供應商端點鏈」一節 |
 | `CLOUD_MODELS` | `gemini-3.1-flash-lite,gemma-4-26b-a4b-it,gemini-3.5-flash-lite` | 依序嘗試的雲端模型 |
 | `CONTINUATION_JOIN` | `1` | 跨框續句拼接（`0` 關閉） |
 | `STARTUP_SMOKE` | `1`（Thor 啟動腳本設 `0`） | 啟動時逐模型煙霧測試；每次重啟花每模型 1 次當日額度 |
@@ -77,15 +79,35 @@ uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 
 **黏性自動調棒**：每次請求直接打「上次成功的模型」，它失敗才往下試；**誰救場誰就成為新的第一棒**，直到它自己也開始失敗。所以某個模型服務端出問題時，你最多感覺到一句變慢（單句逾時 2.5s／批次 6s，可用 `CLOUD_READ_TIMEOUT_SINGLE`／`_BATCH` 調整），之後系統自動穩定在健康的模型上——不需要人工介入或改設定。領隊變更會寫 INFO log（`Cloud leader is now ...`）。重啟代理後回到預設順序重新學習。
 
-**每日重新洗牌**：免費額度於**太平洋午夜**（台灣約下午 3–4 點）重置，跨過該時點時代理清空領隊記憶，下一句重新從最偏好的模型試起。不分降級原因一律復位——額度型的主力剛好回滿；若當初是生病且還沒好，代價僅一句話的逾時（2.5 秒）就會再次自動換掉，不值得為此增加判斷邏輯。
+**每日重新洗牌**：跨過每日邊界（太平洋午夜，台灣約下午 3–4 點）時，代理清空領隊記憶**與所有冷卻／退避狀態**，下一句重新從最偏好的端點試起。不分降級原因一律復位——若某端點還是有問題，一句話的代價就會再次自動換掉，不值得為此增加判斷邏輯。（這個時間點只是「每天重洗一次」的錨點，不再承載任何供應商的重置語意。）
 
-**額度耗盡直接跳過**：雲端回 429 且 body 帶 PerDay 額度證據時，該模型**當日直接跳過**（不再逐句白費探測），到太平洋午夜額度重置自動恢復；啟動煙霧測試的 429 也會預先寫入跳過表。沒有 PerDay 證據的 429 不標記（fail-open，維持原本的重試行為），但會寫一次 WARNING 留下 body 以便診斷。
+**金鑰鏈**：`GEMINI_API_KEYS` 設多把 key 時，嘗試順序為 **key 為主序**——第一把 key 的整條模型鏈先試完，第二把 key 才會收到任何流量。設計用途是官方支持的「免費專案＋付費專案」切換：免費 key 放前面、開帳單的溢流 key 放最後，免費 500 次/日花完才會產生第一筆計費請求。負快取、逾時冷卻、黏性領隊都以 (key, model) 為單位各自記帳；log 只印位置標籤（`key1/gemini-3.1-flash-lite`），永不印金鑰本身。
+
+**多供應商端點鏈**：`CLOUD_ENDPOINTS` 把金鑰鏈推廣成「端點鏈」——每一項指向一個 OpenAI 相容供應商（Groq、Cloudflare Workers AI、Z.ai、Cerebras…）。逗號分隔多個端點，每項格式 `url|key|model1;model2`（`|` 分隔三欄、`;` 分隔模型，因為逗號留給項目分隔）。**三欄一律寫全、完全對稱**——Gemini 不是特例，任何欄位都不繼承 `CLOUD_URL`/`CLOUD_MODELS`（那兩個全域只屬於舊金鑰變數）；漏寫 URL 或模型清單會在**啟動時直接報錯**並指出第幾條有問題。唯一允許的空欄是顯式空 key（`url||models`，無認證的自架伺服器）。範例——第一棒 Groq 的 Qwen、第二棒完整寫出的 Gemini：
+
+```bash
+export CLOUD_ENDPOINTS="https://api.groq.com/openai/v1|gsk_xxx|qwen/qwen3.6-27b,https://generativelanguage.googleapis.com/v1beta/openai|AIzaSy_xxx|gemini-3.1-flash-lite;gemma-4-26b-a4b-it;gemini-3.5-flash-lite"
+```
+
+（只用 Gemini 的簡單設定，繼續用 `GEMINI_API_KEY`／`GEMINI_API_KEYS` 即可——那是保留的單供應商模式，不必遷移。）
+
+**新增模型流程**：拿到新供應商的 key 後，先跑審查工具再上鏈——
+
+```bash
+uv run python tools/vet_endpoint.py 'https://新供應商/v1|key|model1;model2'
+```
+
+它會用 proxy 的真實 prompt 與輸出防護跑五關：連通診斷（401/402/404 直接說人話）、12 句術語語料實測（延遲、thinking 洩漏、原文回聲、空輸出、全形空格、簡體滲漏）、批次行數契約、thinking 藥方試打（洩漏時自動試已知關閉參數、印出該加進 `cloud.py REQUEST_TWEAKS` 的那一行），最後給 PASS/WARN/FAIL 判決與可直接貼進 `env.sh` 的條目。**機器只驗格式與延遲，逐句譯文品質要人工複審輸出表**。判決通過→貼 `env.sh`→`deploy_thor.sh`（啟動煙霧測試做最後把關）。
+
+嘗試順序同樣是**端點為主序**（第一個端點的整條模型鏈先試完）；額度負快取、逾時冷卻、黏性領隊都以「端點」為單位各自記帳，同名模型掛在不同端點互不影響。log 仍只印位置標籤（`key1/qwen/qwen3.6-27b`），請求路徑上永不印金鑰與完整 URL（Cloudflare 的 URL 內嵌帳號 id）；完整的「位置 → URL」對照只在啟動時印一次。
+
+**429 通用冷卻**：**任何**供應商回 429，該 (端點, 模型) 就進入冷卻——供應商給的 `Retry-After`（header 或 Gemini 的 body 提示）是下限，重複 429 則退避翻倍（預設 60 秒起、封頂 1 小時，`CLOUD_429_COOLDOWN_S`／`_MAX_S` 可調）。**不需要知道任何一家的額度重置時間**：鏈夠深，耗盡的端點自己冷卻、其他端點頂上，每日額度用完自然收斂到「每小時探測一次」。一旦成功就清除退避；啟動煙霧測試的 429 也會預先寫入冷卻表。每輪冷卻的第一個 429 會把 body 記進 WARNING，看不懂的額度訊息因此可診斷。
 
 **連續逾時冷卻**：同一模型**連續 3 次**傳輸錯誤（逾時／斷線）→ 冷卻 60 秒再試（`CLOUD_STRIKE_LIMIT`／`CLOUD_STRIKE_COOLDOWN_S` 可調）。這是黏性調棒補不到的洞：全部雲端模型都在 stall 時沒有任何成功可以觸發降級，而**被放棄的 stall 呼叫在 Google 端照樣計費完整 input tokens、照扣當日額度**——2026-08-03 深夜的額度爆量正是這樣燒掉的。
 
 **回應快取**：prompt 完全相同（原文＋前文＋命中術語都一致）的請求，1 小時內直接回放快取，不再打雲端；本地 Sakura 兜底的答案只留 2 分鐘，雲端恢復後儘快換回高品質譯文。空回應與失敗一律不快取（批次行數不符的 400 仍會觸發 PT 逐句重試）。log 每 100 句印一行 `Cache stats`，其中 `repeated-source misses` 是「同一句短時間內重來、但前文不同以致快取沒中」的計數——這個數字是日後評估是否放寬快取鍵或加做 in-flight 合併的依據。
 
-- 啟動 log 會對每個雲端模型做煙霧測試（`Cloud model xxx: OK`）——若顯示 404 表示模型 id 有變，用 `CLOUD_MODELS` 環境變數修正（可用 `curl -H "Authorization: Bearer $GEMINI_API_KEY" https://generativelanguage.googleapis.com/v1beta/openai/models` 查現行清單）
+- 啟動 log 會對每組 (key, 模型) 做煙霧測試（`Cloud xxx: OK`，多把 key 時為 `Cloud key1/xxx: OK`）——若顯示 404 表示模型 id 有變，用 `CLOUD_MODELS` 環境變數修正（可用 `curl -H "Authorization: Bearer $GEMINI_API_KEY" https://generativelanguage.googleapis.com/v1beta/openai/models` 查現行清單）
 - 每次實際發生降級都會寫 WARNING log，可觀察額度消耗情形
 - 隱私註記：免費層的請求內容 Google 會用於改善產品（付費層不會）；本用途僅遊戲對話文本
 - 雲端模型直接輸出台灣正體（品質優於 OpenCC 機械轉換）；本地 Sakura 兜底輸出仍走 s2twp

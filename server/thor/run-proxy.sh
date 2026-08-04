@@ -8,9 +8,11 @@ cd "$DIR"
 if [ -f env.sh ]; then
     . ./env.sh
 fi
-if [ -z "$GEMINI_API_KEY" ]; then
-    echo "GEMINI_API_KEY is not set. Create $DIR/env.sh with:" >&2
-    echo "  export GEMINI_API_KEY=\"AIza...\"" >&2
+if [ -z "$GEMINI_API_KEY" ] && [ -z "$GEMINI_API_KEYS" ] && [ -z "$CLOUD_ENDPOINTS" ]; then
+    echo "GEMINI_API_KEY (or GEMINI_API_KEYS / CLOUD_ENDPOINTS) is not set. Create $DIR/env.sh with:" >&2
+    echo "  export GEMINI_API_KEY=\"AIza...\"           # single key" >&2
+    echo "  export GEMINI_API_KEYS=\"free...,extra...\"  # or an ordered key chain" >&2
+    echo "  export CLOUD_ENDPOINTS=\"url|key|model1;model2,...\"  # or a multi-provider chain" >&2
     exit 1
 fi
 

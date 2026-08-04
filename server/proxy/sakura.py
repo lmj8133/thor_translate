@@ -169,8 +169,33 @@ def join_continuation(
         consumed += 1
     if not consumed:
         return current, list(context_pairs)
-    joined = "".join(source for source, _ in context_pairs[-consumed:]) + current
+    prefix = "".join(source for source, _ in context_pairs[-consumed:])
+    joined = prefix + _drop_overlap(prefix, current)
     return joined, list(context_pairs[:-consumed])
+
+
+# Seams shorter than this only count when they end at a line boundary: a
+# coincidental one-character match (て/て) must never eat real text, while a
+# genuinely re-captured short line always ends where its newline was.
+_MIN_OVERLAP = 4
+
+
+def _drop_overlap(prefix: str, current: str) -> str:
+    """Drop current's head where it repeats prefix's tail (scrolled boxes).
+
+    A dialogue box that scrolls by one line re-captures the surviving line:
+    the previous payload's tail reappears verbatim at the current payload's
+    head, and joining without deduplication would translate that line twice
+    (and display it twice). Longest exact overlap wins; OCR jitter that
+    changes the re-captured text falls back to the old duplicated join,
+    which is redundant but never wrong.
+    """
+    for k in range(min(len(prefix), len(current)), 0, -1):
+        if not prefix.endswith(current[:k]):
+            continue
+        if k >= _MIN_OVERLAP or k == len(current) or current[k] == "\n":
+            return current[k:]
+    return current
 
 
 def build_user_prompt(

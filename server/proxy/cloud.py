@@ -1,4 +1,4 @@
-"""Generic cloud-model prompt construction (Gemini OpenAI-compatible API).
+"""Generic cloud-model prompt construction (OpenAI-compatible providers).
 
 Unlike the Sakura path (sakura.py), cloud models are general instruction
 followers: they are asked for Taiwan Traditional output directly (so no
@@ -7,18 +7,77 @@ plain instructions. The line-count contract matches the Sakura path so the
 batch splitting logic in main.py works unchanged for both.
 """
 
+import re
+from urllib.parse import urlsplit
+
 from .glossary import GlossaryEntry
 
+# The trailing /no_think is Qwen's soft switch for its hybrid-reasoning mode
+# (a 2.5 s translation budget cannot afford visible chain-of-thought). Other
+# model families treat it as stray system-prompt text - measured harmless on
+# Gemini; providers with a real off-switch parameter get it via
+# request_tweaks() below instead.
 SYSTEM_PROMPT = (
     "你是遊戲文本翻譯引擎，將日文遊戲文本翻譯成台灣正體中文。規則：\n"
     "1. 只輸出譯文，不要任何解釋、註記、拼音或引號包裹。\n"
     "2. 輸出行數必須與輸入行數完全一致，逐行對應；行內的「\\n」字面序列原樣保留。\n"
     "3. 提供術語表時，原文中出現的術語必須使用指定譯名。\n"
     "4. 原文常以平假名書寫（兒童向文本），請依上下文正確判讀詞義。\n"
-    "5. 用語採台灣習慣，對話語氣自然口語。"
+    "5. 用語採台灣習慣，對話語氣自然口語。\n"
+    "/no_think"
 )
 
 SAMPLING = {"temperature": 0.2}
+
+# Per-host request tweaks that switch hybrid-reasoning models into plain
+# answer mode (measured 2026-08-04: without these, the reasoning burns the
+# whole token budget and the content arrives empty). The chain stays
+# provider-neutral - these are compatibility shims keyed by the one provider
+# whose API needs each field, because providers reject each other's fields
+# with a 400 (Gemini and Groq both do). A new provider quirk is one row.
+REQUEST_TWEAKS: list[tuple[str, dict]] = [
+    ("api.groq.com", {"reasoning_effort": "none"}),
+    ("api.z.ai", {"thinking": {"type": "disabled"}}),
+]
+
+# Some models leak their reasoning into content as <think>/<thought> blocks
+# (Gemma has no off-switch at all). Closed blocks or an unclosed block that
+# runs to the end of the text are both dropped.
+_REASONING_BLOCK = re.compile(r"<(think|thought)>.*?(</\1>|\Z)", re.DOTALL)
+
+
+def request_tweaks(base_url: str) -> dict:
+    """Extra request-body fields this provider needs, {} for everyone else."""
+    host = urlsplit(base_url).netloc
+    for suffix, extra in REQUEST_TWEAKS:
+        if host == suffix or host.endswith("." + suffix):
+            return dict(extra)
+    return {}
+
+
+def strip_reasoning(text: str) -> str:
+    """Remove leaked reasoning blocks; the caller treats leftovers of "" as
+    a failed attempt so the chain slides instead of serving garbage."""
+    return _REASONING_BLOCK.sub("", text).strip()
+
+
+_KANA = re.compile(r"[぀-ヿ]")
+
+
+def is_untranslated_echo(input_text: str, output: str) -> bool:
+    """True when the model handed the Japanese input back unchanged.
+
+    Only fires when the input actually contains kana: a symbol-only line
+    ("……") translating to itself is correct, not an echo. Whitespace and
+    U+3000 are ignored so a space-stripped echo still counts.
+    """
+    if not _KANA.search(input_text):
+        return False
+
+    def normalize(text: str) -> str:
+        return text.replace("　", "").strip()
+
+    return normalize(output) == normalize(input_text)
 
 
 def build_user_prompt(
