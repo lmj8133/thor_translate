@@ -5,8 +5,13 @@ prompt, context block of previous pairs, wrapper line), so each round trip
 exercises the proxy's request parsing, glossary injection, and Sakura prompt
 construction end to end.
 
+The proxy reads the model field as its per-game glossary selector, so pass
+--model to spot-check a real game's terms; the default names no glossary file
+and therefore measures the no-injection baseline.
+
 Usage:
     uv run python tools/quality_check.py --endpoint http://localhost:8000/v1
+    uv run python tools/quality_check.py --model pokemon-oras
 
 Exit codes: 0 = all lines translated, 1 = any request failed.
 """
@@ -64,6 +69,16 @@ def main() -> int:
         default=str(Path(__file__).with_name("sample_dialogue.jsonl")),
         help="JSONL test set with a 'ja' field per line (default: %(default)s)",
     )
+    parser.add_argument(
+        "--model",
+        default="quality-check",
+        help=(
+            "Value of the request's model field, which the proxy reads as the "
+            "glossary selector (e.g. pokemon-oras). The default names no "
+            "glossary file, so injection falls back to GLOSSARY_PATH "
+            "(default: %(default)s)"
+        ),
+    )
     args = parser.parse_args()
 
     dialogue_path = Path(args.dialogue)
@@ -85,7 +100,7 @@ def main() -> int:
         for index, item in enumerate(lines, start=1):
             text = item["ja"]
             body = {
-                "model": "quality-check",
+                "model": args.model,
                 "messages": [
                     {"role": "system", "content": PT_SYSTEM},
                     {"role": "user", "content": build_user_message(text, context_pairs)},
