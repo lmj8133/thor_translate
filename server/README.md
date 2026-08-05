@@ -1,14 +1,15 @@
 # Phase 02 翻譯後端 — Mac 部署與使用指南
 
-架構（皆在同一 LAN）：
+架構（兩台各司其職）：
 
 ```
-Thor (PlayTranslate, Custom URL)
-   → http://<mac-ip>:8000/v1        術語注入代理（Starlette，本目錄；亦可改跑在 Thor 上，見 README-thor.md）
-      → 雲端備援鏈（設 GEMINI_API_KEY 時啟用，品質優先）：
-         gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemma-4-26b-a4b-it
-      → http://localhost:11434/v1   Ollama（Sakura-GalTransl-7B-v3.7，最後兜底）
+Thor（PlayTranslate）
+ ├─ 第一位服務：http://127.0.0.1:8000/v1   Thor 上的 Termux 代理──雲端端點鏈（設定見 README-thor.md）
+ └─ 第二位服務：http://<mac-ip>:8000/v1    Mac 上的代理──純本地 Sakura 兜底（本檔）
+                  → http://localhost:11434/v1   Ollama（Sakura-GalTransl-7B-v3.7）
 ```
+
+分工原則：**雲端金鑰只住在 Thor 端**；Mac 端的代理刻意不設任何金鑰（純 Sakura 模式），所以 Thor 掛掉退到 Mac 時，不會重打同一批可能已耗盡的雲端額度——它是真正獨立的兜底層。
 
 代理的職責：把 PlayTranslate 的請求整段改寫成 Sakura-GalTransl v3.7 官方 prompt 格式，掃描原文、只注入命中的 per-game 術語（gpt_dict 格式），轉發給 Ollama。模型的簡中輸出在**代理出口直接轉台灣正體**（OpenCC `s2twp`，含台灣用語），不依賴 PT 端的顯示轉換設定；PT 回傳的前文 context 則以 `tw2sp` 正規化回簡體再餵給模型。
 
@@ -58,7 +59,7 @@ uv sync
 uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 ```
 
-（前提：key 已放 `~/.zshrc`：`export GEMINI_API_KEY="AIza..."`。術語庫由 PT 的 Model 選單逐請求選擇；若想給「沒選遊戲時」一份預設表，啟動時加 `GLOSSARY_PATH=glossaries/pokemon-oras.txt`）
+**Sakura 專用模式：不要設定任何雲端金鑰**（`GEMINI_API_KEY`／`GEMINI_API_KEYS`／`CLOUD_ENDPOINTS` 都留空）——雲端鏈由 Thor 端負責，Mac 只准備 Sakura。啟動 log 應見 `cloud chain disabled, local Sakura only`。術語庫由 PT 的 Model 選單逐請求選擇；若想給「沒選遊戲時」一份預設表，啟動時加 `GLOSSARY_PATH=glossaries/pokemon-oras.txt`。
 
 | 環境變數 | 預設 | 說明 |
 |----------|------|------|
@@ -74,6 +75,8 @@ uv run uvicorn server.proxy.main:app --host 0.0.0.0 --port 8000
 | `TRANSLATION_CACHE_SIZE` | `256` | 完全相同 prompt 的回應快取條數（`0` 關閉） |
 
 ### 雲端備援鏈行為
+
+> 本節與後續雲端章節適用於**持有金鑰的部署**（目前是 Thor 端，見 README-thor.md）；Mac 端的 Sakura 專用模式不設金鑰，可跳過。
 
 預設順序：**3.1 Flash Lite（免費 500 次/天）→ Gemma 4 26B（14,400 次/天）→ 3.5 Flash Lite（再 500 次/天）→ 本地 Sakura**。任何一層失敗（429 額度盡、斷網、逾時、行數不符）自動滑到下一層——雲端全掛時退回本地，翻譯永遠不中斷。免費層 key 沒綁付款方式，**額度用完是硬停，不可能被收費**。
 

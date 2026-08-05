@@ -22,11 +22,12 @@ mkdir -p "$DEST"
 cp -r "$STAGE/server" "$STAGE/glossaries" "$DEST/"
 chmod +x "$DEST"/server/thor/*.sh
 
-# Autostart hook - takes effect once the Termux:Boot app is installed
-# and has been opened at least once.
-mkdir -p "$HOME/.termux/boot"
-cp "$DEST/server/thor/boot-start.sh" "$HOME/.termux/boot/boot-start.sh"
-chmod +x "$HOME/.termux/boot/boot-start.sh"
+# No autostart hook on purpose: Termux:Boot fires before Wi-Fi is up, so a
+# boot-started proxy is reachable but cannot translate, and PlayTranslate's
+# first failed request puts the service into its own ~30-minute cooldown.
+# Starting it by hand (after the network is up) is both simpler and more
+# reliable - see README-thor.md.
+rm -f "$HOME/.termux/boot/boot-start.sh"
 
 echo ""
 echo "Setup done."

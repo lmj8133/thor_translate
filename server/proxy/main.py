@@ -102,8 +102,8 @@ GLOSSARY_PATH = os.environ.get("GLOSSARY_PATH", "")
 # text boxes routinely end without sentence-final punctuation.
 CONTINUATION_JOIN = os.environ.get("CONTINUATION_JOIN", "1") != "0"
 # "0" skips the per-model cloud smoke tests at startup: each probe costs one
-# request against that model's daily quota, and Android restarts the service
-# often enough for that to add up (see boot-start.sh).
+# request against that model's daily quota, and the proxy is restarted often
+# enough (every deploy, every manual start) for that to add up.
 STARTUP_SMOKE = os.environ.get("STARTUP_SMOKE", "1") != "0"
 
 # Cloud-first, local-fallback chain. With GEMINI_API_KEY set, each request
@@ -453,6 +453,30 @@ _translation_cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
 # whether a looser key or in-flight coalescing is worth building later.
 _cache_stats = {"requests": 0, "hits": 0, "repeat_misses": 0}
 
+# Live status, surfaced in the notification shade and at /status. Kept as
+# plain counters rather than a history buffer: the game script must never
+# accumulate in memory (or leak into a status page) on a handheld that runs
+# for months.
+#
+# The status surface is the /status page, deliberately not the Android
+# notification shade: termux-notification on the Thor (Termux:API 0.53)
+# posts nothing and never exits, leaving unkillable strays behind.
+_status = {
+    "served": 0,          # translations answered (cache hits included)
+    "last_backend": "",   # positional label of whatever answered last
+    "last_seconds": 0.0,
+    "last_at": 0.0,       # monotonic, for "idle for N s" on the status page
+    "started_at": time.time(),
+    "ready": "",          # the readiness banner /status leads with
+}
+
+
+def _record_served(label: str, seconds: float) -> None:
+    _status["served"] += 1
+    _status["last_backend"] = label
+    _status["last_seconds"] = seconds
+    _status["last_at"] = time.monotonic()
+
 
 def _cache_key(is_batch: bool, input_text: str, history: list[tuple[str, str]], entries) -> str:
     hist = "\x1f".join(f"{source}\x1e{translation}" for source, translation in history)
@@ -543,9 +567,78 @@ def _get_cloud_client(base_url: str, api_key: str) -> httpx.AsyncClient:
     return client
 
 
+CLOUD_READY_PROBE_INTERVAL_S = 3.0
+
+
+# The readiness probe translates one short line through the real chain.
+# Probing /models only proved the network was up, which is a weaker promise
+# than the banner implies: a green light has to mean "the next line PT sends
+# will come back translated", and only an actual translation proves that
+# (endpoint reachable AND key valid AND quota left AND output usable). One
+# line costs ~250 tokens, which is noise next to a day's play.
+READY_PROBE_LINE = "はい"
+
+
+async def _cloud_reachable(endpoint: Endpoint) -> bool:
+    """True once a real translation completes through the chain."""
+    for model in endpoint.models:
+        if not _cloud_available((endpoint, model)):
+            continue
+        try:
+            resp = await post_cloud(
+                {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": cloud.SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": cloud.build_user_prompt([], [], READY_PROBE_LINE),
+                        },
+                    ],
+                    "stream": False,
+                    "max_tokens": 64,
+                    **cloud.SAMPLING,
+                    **cloud.request_tweaks(endpoint.url, model),
+                },
+                read_timeout=CLOUD_READ_TIMEOUT_BATCH,
+                api_key=endpoint.key,
+                base_url=endpoint.url,
+            )
+        except httpx.HTTPError:
+            return False  # network still down - keep waiting, do not burn more
+        if resp.status_code != 200:
+            _note_cloud_response((endpoint, model), resp)
+            continue  # this model is spent or sick; the next one may serve
+        try:
+            content = resp.json()["choices"][0]["message"]["content"] or ""
+        except (ValueError, LookupError, TypeError):
+            continue
+        if cloud.strip_reasoning(content):
+            return True
+    return False
+
+
+def _set_ready(text: str, banner: str = "") -> None:
+    """Record readiness and, for the states worth interrupting for, print a
+    banner to the console.
+
+    The Termux window that launched the proxy is where the operator actually
+    looks - a line buried among INFO records is easy to miss, so the two
+    states that gate "can I start the game" get framed output.
+    """
+    _status["ready"] = text
+    if banner:
+        width = max(len(line) for line in banner.splitlines()) + 4
+        print("\n" + "=" * width)
+        for line in banner.splitlines():
+            print(f"  {line}")
+        print("=" * width + "\n", flush=True)
+
+
 async def _startup_checks() -> None:
     """Best-effort diagnostics, run in the background so the port opens
     immediately (the Gemma smoke test alone can take ~40 s cold)."""
+    _set_ready("Starting…")
     # Preload the local model and pin it in memory. keep_alive is not settable
     # through /v1, so this native call is the only way to prevent the 5-minute
     # idle unload without reconfiguring the Ollama server itself.
@@ -576,9 +669,19 @@ async def _startup_checks() -> None:
                 endpoint.url,
                 ", ".join(endpoint.models),
             )
-    if endpoints and not STARTUP_SMOKE:
+    if not endpoints:
+        logger.info(
+            "No usable cloud endpoints (CLOUD_ENDPOINTS/GEMINI_API_KEYS/"
+            "GEMINI_API_KEY) - cloud chain disabled, local Sakura only"
+        )
+        _set_ready(
+            "Ready — local Sakura only",
+            "READY - local Sakura only (no cloud keys configured)",
+        )
+        return
+    if not STARTUP_SMOKE:
         logger.info("STARTUP_SMOKE=0 - cloud smoke tests skipped")
-    elif endpoints:
+    else:
         for endpoint in endpoints:
             for model in endpoint.models:
                 pair = (endpoint, model)
@@ -610,11 +713,38 @@ async def _startup_checks() -> None:
                         )
                 except httpx.HTTPError as exc:
                     logger.warning("Cloud %s: unreachable: %r", _pair_desc(pair), exc)
-    else:
-        logger.info(
-            "No usable cloud endpoints (CLOUD_ENDPOINTS/GEMINI_API_KEYS/"
-            "GEMINI_API_KEY) - cloud chain disabled, local Sakura only"
-        )
+    # Readiness is reported whether or not the smoke tests ran: the Thor
+    # launcher sets STARTUP_SMOKE=0 to save quota, and the "safe to start
+    # the game" signal must not be collateral damage of that choice.
+    # Boot race guard: on-device the port opens well before Wi-Fi is up, and
+    # a translation fired into that gap not only fails but also trips
+    # PlayTranslate's own ~30-minute service cooldown. Probe every endpoint,
+    # not just the first: on a day when the leading provider's quota is spent
+    # the chain still translates fine, and the banner must say so.
+    waiting = False
+    while True:
+        for endpoint in endpoints:
+            if await _cloud_reachable(endpoint):
+                logger.info(
+                    "Translation verified via %s - ready (%d endpoints)",
+                    _key_label(endpoint),
+                    len(endpoints),
+                )
+                _set_ready(
+                    f"✅ Ready — {len(endpoints)} cloud endpoints",
+                    f"READY - translation verified via {_key_label(endpoint)}\n"
+                    f"{len(endpoints)} cloud endpoints - safe to start the game",
+                )
+                return
+        if not waiting:
+            waiting = True
+            logger.info("No endpoint translated yet - waiting before declaring ready")
+            _set_ready(
+                "Waiting for network… — do NOT start the game yet",
+                "NOT READY - waiting for network\n"
+                "Do NOT start the game yet (a failed request costs a ~30 min cooldown)",
+            )
+        await asyncio.sleep(CLOUD_READY_PROBE_INTERVAL_S)
 
 
 @asynccontextmanager
@@ -752,6 +882,7 @@ async def chat_completions(request: Request) -> JSONResponse:
             _cache_stats["hits"] += 1
             if TRACE:
                 logger.info("TRACE cache-hit | in=%r", input_text)
+            _record_served("cache", 0.0)
             return Response(cached, media_type="application/json")
         if was_recent:
             # Same source seconds apart yet the exact key missed: a repeat
@@ -930,6 +1061,9 @@ async def chat_completions(request: Request) -> JSONResponse:
             # shows up within minutes.
             ttl = TRANSLATION_CACHE_TTL_LOCAL_S if kind == "local" else TRANSLATION_CACHE_TTL_S
             _cache_put(cache_key, body_bytes, ttl)
+        # Counters only: /status renders them on demand, so nothing on the
+        # request path can be delayed by status reporting.
+        _record_served(label, time.monotonic() - started)
         return Response(body_bytes, media_type="application/json")
 
     detail = "; ".join(failures)
@@ -937,6 +1071,121 @@ async def chat_completions(request: Request) -> JSONResponse:
         # A 400 triggers PT's per-text retry path.
         return _error(400, f"All backends failed batch translation: {detail}")
     return _error(502, f"All translation backends failed: {detail}")
+
+
+_STATUS_PAGE = """<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Translation Proxy</title>
+<style>
+ body{{font:15px/1.5 system-ui,sans-serif;margin:0;padding:16px;
+      background:#12141a;color:#e6e6e6}}
+ h1{{font-size:17px;margin:0 0 12px}}
+ .ready{{background:#16281c;border:1px solid #2c4a35;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:16px;color:#7fd4a0}}
+ .now{{background:#1c2030;border-radius:10px;padding:12px 14px;margin-bottom:14px}}
+ .now b{{font-size:19px;color:#7fd4a0}}
+ table{{border-collapse:collapse;width:100%;font-size:13px}}
+ th,td{{text-align:left;padding:6px 8px;border-bottom:1px solid #262b38}}
+ th{{color:#8c93a5;font-weight:500}}
+ .ok{{color:#7fd4a0}} .cool{{color:#e0a458}} .dim{{color:#6b7280}}
+</style>
+<h1>Translation Proxy</h1>
+<div class="ready" id="ready">{ready}</div>
+<div class="now" id="now"><b>{last_backend}</b><br>{last_seconds:.1f}s · {served} lines served{idle}</div>
+<table id="tbl"><tr><th>Endpoint / model</th><th>State</th></tr>{rows}</table>
+<p class="dim" id="foot">Cache {hits}/{requests} hits · {repeat_misses} repeat misses<br>
+Uptime {uptime} · <span id="r">live</span></p>
+<script>
+// Refresh only while the page is actually being looked at. A meta-refresh
+// would keep waking the CPU (and re-rendering this whole page) every few
+// seconds behind the game, which on a handheld is pure battery burn.
+(function () {{
+  var timer = null;
+  function tick() {{
+    fetch(location.pathname, {{cache: "no-store"}})
+      .then(function (r) {{ return r.text(); }})
+      .then(function (html) {{
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        ["ready", "now", "tbl", "foot"].forEach(function (id) {{
+          var fresh = doc.getElementById(id), cur = document.getElementById(id);
+          if (fresh && cur) cur.innerHTML = fresh.innerHTML;
+        }});
+      }})
+      .catch(function () {{}});
+  }}
+  function start() {{ if (!timer) {{ tick(); timer = setInterval(tick, 5000); }} }}
+  function stop() {{ if (timer) {{ clearInterval(timer); timer = null; }} }}
+  document.addEventListener("visibilitychange", function () {{
+    document.hidden ? stop() : start();
+  }});
+  if (!document.hidden) start();
+}})();
+</script>
+"""
+
+
+def _human_duration(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+
+
+async def status(request: Request) -> Response:
+    """Human-readable live status - open 127.0.0.1:8000/status on the device.
+
+    Deliberately shows no translated text: the page is unauthenticated on
+    the LAN, and the game script must not leak through it.
+    """
+    now = time.monotonic()
+    rows = []
+    for endpoint in _cloud_endpoints():
+        for model in endpoint.models:
+            pair = (endpoint, model)
+            until = _model_cooldown_until.get(pair)
+            if until is not None and until > now:
+                state = f'<span class="cool">cooling {_human_duration(until - now)}</span>'
+            elif pair == _cloud_leader:
+                state = '<span class="ok">leader</span>'
+            else:
+                state = '<span class="dim">ready</span>'
+            rows.append(f"<tr><td>{_pair_desc(pair)}</td><td>{state}</td></tr>")
+    rows.append(
+        f'<tr><td>{OLLAMA_MODEL} (local)</td><td class="dim">fallback</td></tr>'
+    )
+    idle = ""
+    if _status["last_at"]:
+        idle = f" · idle {_human_duration(now - _status['last_at'])}"
+    page = _STATUS_PAGE.format(
+        ready=_status["ready"] or "Starting…",
+        last_backend=_status["last_backend"] or "—",
+        last_seconds=_status["last_seconds"],
+        served=_status["served"],
+        idle=idle,
+        rows="".join(rows),
+        hits=_cache_stats["hits"],
+        requests=_cache_stats["requests"],
+        repeat_misses=_cache_stats["repeat_misses"],
+        uptime=_human_duration(time.time() - _status["started_at"]),
+    )
+    return Response(page, media_type="text/html; charset=utf-8")
+
+
+async def ready(request: Request) -> Response:
+    """One-word readiness, for a glance that must not lie.
+
+    Separate from /status because that page renders the whole endpoint table
+    on every hit; this returns a constant-size body and answers 503 until a
+    real translation has succeeded, so "green" cannot be stale.
+    """
+    is_ready = _status["ready"].startswith("✅")
+    return Response(
+        _status["ready"] or "Starting…",
+        status_code=200 if is_ready else 503,
+        media_type="text/plain; charset=utf-8",
+        headers={} if is_ready else {"Retry-After": "5"},
+    )
 
 
 async def models(request: Request) -> JSONResponse:
@@ -966,6 +1215,8 @@ app = Starlette(
     routes=[
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
         Route("/v1/models", models, methods=["GET"]),
+        Route("/status", status, methods=["GET"]),
+        Route("/ready", ready, methods=["GET"]),
     ],
     lifespan=_lifespan,
 )

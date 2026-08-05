@@ -15,6 +15,8 @@ import pytest
 from server.proxy import cloud, main, sakura
 from server.proxy.glossary import Glossary, GlossaryError
 
+_REAL_CLOUD_REACHABLE = main._cloud_reachable
+
 GLOSSARY_TEXT = "ダイゴ->大吾 #人名\nポケモン->寶可夢\nこうもく->項目\n"
 
 
@@ -104,11 +106,29 @@ def _local_only_by_default(monkeypatch):
     monkeypatch.setattr(main, "_model_cooldown_until", {})
     monkeypatch.setattr(main, "_recent_sources", {})
     monkeypatch.setattr(main, "_cloud_clients", {})
+    # Startup's readiness wait must never touch the network or the
+    # notification shade from a test; the readiness tests opt back in by
+    # patching these themselves.
+    async def _reachable(_endpoint):
+        return True
+
+    # Tests that exercise the real probe re-patch this with `real_probe`.
+    monkeypatch.setattr(main, "_cloud_reachable", _reachable)
+    monkeypatch.setattr(main, "_status", {
+        "served": 0, "last_backend": "", "last_seconds": 0.0,
+        "last_at": 0.0, "started_at": time.time(), "ready": "",
+    })
 
 
 @pytest.fixture
 def cache_on(monkeypatch):
     monkeypatch.setattr(main, "TRANSLATION_CACHE_SIZE", 8)
+
+
+@pytest.fixture
+def real_probe(monkeypatch):
+    """Undo the autouse stub for tests of the readiness probe itself."""
+    monkeypatch.setattr(main, "_cloud_reachable", _REAL_CLOUD_REACHABLE)
 
 
 @pytest.fixture
@@ -1444,3 +1464,123 @@ async def test_cloud_echo_slides_and_fullwidth_spaces_are_stripped(client, cloud
     assert resp.status_code == 200
     assert resp.json()["choices"][0]["message"]["content"] == "大吾先生在哪裡？"
     assert [p["model"] for p in cloud_chain.payloads] == ["cloud-a", "cloud-b"]
+
+
+async def test_startup_declares_readiness_when_the_cloud_answers(monkeypatch):
+    # Readiness is what /status leads with: it must wait out the boot race
+    # (port up, Wi-Fi not yet) before saying it is safe to start the game.
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["m"])
+    monkeypatch.setattr(main, "STARTUP_SMOKE", False)
+    monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
+    monkeypatch.setattr(main, "CLOUD_READY_PROBE_INTERVAL_S", 0.0)
+    seen: list[str] = []
+    answers = iter([False, False, True])
+
+    async def reachable(_endpoint):
+        seen.append(main._status["ready"])
+        return next(answers)
+
+    monkeypatch.setattr(main, "_cloud_reachable", reachable)
+    await main._startup_checks()
+    assert seen[0] == "Starting…"
+    assert any("Waiting for network" in s for s in seen)
+    assert "Ready" in main._status["ready"]
+
+
+
+
+
+async def test_readiness_is_reported_even_when_smoke_tests_are_off(monkeypatch):
+    # The Thor launcher runs STARTUP_SMOKE=0 to save quota; the readiness
+    # banner must not be collateral damage of that choice.
+    fake = FakeCloud()
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["m"])
+    monkeypatch.setattr(main, "STARTUP_SMOKE", False)
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
+    await main._startup_checks()
+    assert fake.payloads == []  # smoke tests really were skipped
+    assert "Ready" in main._status["ready"]
+
+
+async def test_status_page_shows_the_live_backend(client, cloud_chain, upstream, glossary_file):
+    # The page is the at-a-glance answer to "which model is translating?"
+    cloud_chain.replies = [(200, "譯文")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    resp = await client.get("/status")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    body = resp.text
+    assert "cloud-a" in body          # the model that served
+    assert "lines served" in body
+    assert main.OLLAMA_MODEL in body  # local fallback row
+    # Never leak the game script or key material onto an unauthenticated page.
+    assert "こんにちは" not in body
+    assert "譯文" not in body
+    assert "test-key" not in body
+
+
+async def test_status_marks_cooling_backends(client, cloud_chain, upstream, glossary_file):
+    cloud_chain.replies = [(429, ""), (200, "b 接手")]
+    await client.post("/v1/chat/completions", json=pt_request("こんにちは"))
+    body = (await client.get("/status")).text
+    assert "cooling" in body   # cloud-a took a 429 cooldown
+    assert "leader" in body    # cloud-b rescued and leads
+
+
+
+
+
+
+
+
+async def test_readiness_requires_a_real_translation(monkeypatch, real_probe):
+    # A green banner must mean "the next line comes back translated", so the
+    # probe runs the real chain: an endpoint that answers 429 is NOT ready,
+    # and readiness only lands once a model actually translates.
+    fake = FakeCloud()
+    fake.replies = [(429, ""), (200, "好")]
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["m1", "m2"])
+    monkeypatch.setattr(main, "STARTUP_SMOKE", False)
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    monkeypatch.setattr(main, "_get_client", lambda: _NoOllama())
+    monkeypatch.setattr(main, "CLOUD_READY_PROBE_INTERVAL_S", 0.0)
+    await main._startup_checks()
+    assert "Ready" in main._status["ready"]
+    # m1's 429 was recorded as a cooldown rather than treated as readiness.
+    assert len(fake.payloads) == 2
+
+
+async def test_readiness_probe_rejects_empty_output(monkeypatch, real_probe):
+    # A 200 that carries only reasoning is not a translation.
+    fake = FakeCloud()
+    fake.replies = [(200, "<think>hmm</think>"), (200, "好")]
+    monkeypatch.setattr(main, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "CLOUD_MODELS", ["m1", "m2"])
+    monkeypatch.setattr(main, "post_cloud", fake.post)
+    endpoint = main._cloud_endpoints()[0]
+    assert await main._cloud_reachable(endpoint) is True
+    assert len(fake.payloads) == 2  # m1's reasoning-only reply was rejected
+
+
+async def test_ready_endpoint_is_503_until_verified(client, monkeypatch):
+    monkeypatch.setitem(main._status, "ready", "Waiting for network… — do NOT start the game yet")
+    resp = await client.get("/ready")
+    assert resp.status_code == 503
+    assert resp.headers["retry-after"] == "5"
+    monkeypatch.setitem(main._status, "ready", "✅ Ready — 4 cloud endpoints")
+    resp = await client.get("/ready")
+    assert resp.status_code == 200
+    assert "Ready" in resp.text
+
+
+async def test_status_page_does_not_poll_in_the_background(client, upstream, glossary_file):
+    # A meta-refresh keeps waking the CPU behind the game; the page must only
+    # poll while it is actually visible.
+    body = (await client.get("/status")).text
+    assert "http-equiv=\"refresh\"" not in body
+    assert "visibilitychange" in body
+    assert 'id="ready"' in body  # the ids the partial refresh updates

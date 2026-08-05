@@ -36,7 +36,10 @@ echo "== push to staging =="
 "$ADB" push glossaries /sdcard/thor-proxy/ | tail -1
 
 echo "== sync into Termux home =="
-"$ADB" shell "run-as com.termux sh -c 'cp -r /storage/emulated/0/thor-proxy/server /storage/emulated/0/thor-proxy/glossaries files/home/thor-proxy/ && chmod +x files/home/thor-proxy/server/thor/*.sh && cp files/home/thor-proxy/server/thor/boot-start.sh files/home/.termux/boot/boot-start.sh && chmod +x files/home/.termux/boot/boot-start.sh && echo synced'"
+# No boot hook is installed (and any leftover is removed): Termux:Boot
+# starts the proxy before Wi-Fi is up, which leaves it reachable but unable
+# to translate - and PT's first failed request costs a ~30-minute cooldown.
+"$ADB" shell "run-as com.termux sh -c 'cp -r /storage/emulated/0/thor-proxy/server /storage/emulated/0/thor-proxy/glossaries files/home/thor-proxy/ && chmod +x files/home/thor-proxy/server/thor/*.sh && rm -f files/home/.termux/boot/boot-start.sh && echo synced'"
 
 echo "== restart proxy =="
 # A headless (run-as) proxy is only safe from Android's empty-process reaper
