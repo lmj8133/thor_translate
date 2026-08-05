@@ -790,7 +790,7 @@ async def chat_completions(request: Request) -> JSONResponse:
                 "stream": False,
                 "max_tokens": max_tokens,
                 **cloud.SAMPLING,
-                **cloud.request_tweaks(endpoint.url),
+                **cloud.request_tweaks(endpoint.url, model),
             }
         else:
             # The Sakura model is trained on Simplified; its history block is

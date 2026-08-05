@@ -76,10 +76,10 @@ def translation_body(model: str, entries, input_text: str, extra: dict) -> dict:
     }
 
 
-def vet_model(url: str, key: str, model: str, lines: list[dict], glossary: Glossary, budget: float) -> str:
+def vet_model(url: str, key: str, model: str, lines: list[dict], glossary: Glossary, budget: float, pace: float = 0.0) -> str:
     """Run every stage for one model; returns 'PASS' / 'WARN' / 'FAIL'."""
     print(f"\n===== {model} =====")
-    tweaks = cloud.request_tweaks(url)
+    tweaks = cloud.request_tweaks(url, model)
 
     # Stage 1: reachability.
     body = {"model": model, "messages": [{"role": "user", "content": "hi"}],
@@ -95,10 +95,12 @@ def vet_model(url: str, key: str, model: str, lines: list[dict], glossary: Gloss
     print(f"[連通] OK ({dt:.2f}s)")
 
     # Stage 2: real translations with the proxy's guards.
-    stats = {"ok": 0, "empty": 0, "echo": 0, "leak": 0, "space": 0, "simp": 0, "err": 0}
+    stats = {"ok": 0, "empty": 0, "echo": 0, "leak": 0, "space": 0, "simp": 0, "err": 0, "cut": 0}
     times: list[float] = []
     outputs: list[str] = []
     for item in lines:
+        if pace:
+            time.sleep(pace)  # free tiers meter RPM; a vet must not 429 itself
         ja = item["ja"]
         entries = glossary.match(ja)
         resp, dt, exc = post(url, key, translation_body(model, entries, ja, tweaks), timeout=20.0)
@@ -107,7 +109,13 @@ def vet_model(url: str, key: str, model: str, lines: list[dict], glossary: Gloss
             outputs.append(f"[{item['id']:2}] ERR {exc!r:.40}" if exc else f"[{item['id']:2}] HTTP {resp.status_code}")
             continue
         times.append(dt)
-        msg = resp.json()["choices"][0]["message"]
+        choice = resp.json()["choices"][0]
+        msg = choice["message"]
+        # Thinking models silently spend max_tokens on reasoning and hand
+        # back a mid-sentence stump - finish_reason is the reliable tell.
+        truncated = choice.get("finish_reason") == "length"
+        if truncated:
+            stats["cut"] += 1
         raw = msg.get("content") or ""
         if "<think" in raw or "<thought" in raw or msg.get("reasoning_content"):
             stats["leak"] += 1
@@ -126,11 +134,14 @@ def vet_model(url: str, key: str, model: str, lines: list[dict], glossary: Gloss
         if _s2twp.convert(served) != served:
             stats["simp"] += 1
         stats["ok"] += 1
-        outputs.append(f"[{item['id']:2}] {dt:4.1f}s {served[:44]}")
+        mark = "（截斷）" if truncated else ""
+        outputs.append(f"[{item['id']:2}] {dt:4.1f}s {served[:44]}{mark}")
     for line in outputs:
         print(line)
 
     # Stage 3: batch line-count contract.
+    if pace:
+        time.sleep(pace)
     batch_src = [item["ja"] for item in lines[:3]]
     joined = "\n".join(sakura.escape_line(t) for t in batch_src)
     entries = glossary.match("\n".join(batch_src))
@@ -167,7 +178,9 @@ def vet_model(url: str, key: str, model: str, lines: list[dict], glossary: Gloss
     bad = stats["empty"] + stats["echo"] + stats["err"]
     print(f"[延遲] p50={p50:.2f}s p95={p95:.2f}s 超過預算{budget}s：{over}/{len(times)}")
     print(f"[統計] 成功 {stats['ok']}/{total}｜空 {stats['empty']}｜回聲 {stats['echo']}｜"
-          f"thinking洩漏 {stats['leak']}｜全形空格 {stats['space']}｜疑似簡體 {stats['simp']}")
+          f"截斷 {stats['cut']}｜thinking洩漏 {stats['leak']}｜全形空格 {stats['space']}｜"
+          f"疑似簡體 {stats['simp']}")
+    bad += stats["cut"]  # a mid-sentence stump gets SERVED - as bad as empty
     if bad > total * 0.3 or (times and p95 > budget * 2):
         verdict = "FAIL"
     elif bad or stats["simp"] > total * 0.3 or over > len(times) * 0.2 or not batch_ok:
@@ -186,6 +199,8 @@ def main() -> int:
     parser.add_argument("--glossary", default="glossaries/pokemon-oras.txt")
     parser.add_argument("--budget", type=float, default=3.5,
                         help="single-line latency budget in seconds (default: %(default)s)")
+    parser.add_argument("--pace", type=float, default=0.0,
+                        help="seconds between requests, for low-RPM free tiers (default: none)")
     args = parser.parse_args()
 
     fields = [f.strip() for f in args.entry.split("|", 2)]
@@ -198,7 +213,10 @@ def main() -> int:
     lines = [json.loads(l) for l in open(args.lines, encoding="utf-8")]
     glossary = Glossary(Path(args.glossary))
 
-    verdicts = [vet_model(url, key, model, lines, glossary, args.budget) for model in models]
+    verdicts = [
+        vet_model(url, key, model, lines, glossary, args.budget, args.pace)
+        for model in models
+    ]
     passed = [m for m, v in zip(models, verdicts) if v == "PASS"]
     if passed:
         print(f"\n可貼進 env.sh 的條目（僅含 PASS 的模型）：")

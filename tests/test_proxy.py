@@ -1322,16 +1322,20 @@ def test_strip_reasoning_drops_leaked_blocks():
     assert cloud.strip_reasoning("大吾先生在哪裡？") == "大吾先生在哪裡？"
 
 
-def test_request_tweaks_are_keyed_by_provider_host():
-    assert cloud.request_tweaks("https://api.groq.com/openai/v1") == {
+def test_request_tweaks_are_keyed_by_host_and_model():
+    assert cloud.request_tweaks("https://api.groq.com/openai/v1", "qwen/qwen3.6-27b") == {
         "reasoning_effort": "none"
     }
-    assert cloud.request_tweaks("https://api.z.ai/api/paas/v4") == {
+    assert cloud.request_tweaks("https://api.z.ai/api/paas/v4", "glm-4.7-flash") == {
         "thinking": {"type": "disabled"}
     }
-    # Everyone else gets a clean body - Gemini and Groq 400 on foreign fields.
-    assert cloud.request_tweaks("https://generativelanguage.googleapis.com/v1beta/openai") == {}
-    assert cloud.request_tweaks("https://api.cloudflare.com/client/v4/accounts/x/ai/v1") == {}
+    # Model-scoped row: only gemini-3.6-flash gets the Gemini-side tweak -
+    # 3.5-flash-lite 400s on the same field, so the host alone must not match.
+    gemini = "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert cloud.request_tweaks(gemini, "gemini-3.6-flash") == {"reasoning_effort": "minimal"}
+    assert cloud.request_tweaks(gemini, "gemini-3.5-flash-lite") == {}
+    assert cloud.request_tweaks(gemini, "gemini-3.1-flash-lite") == {}
+    assert cloud.request_tweaks("https://api.cloudflare.com/client/v4/accounts/x/ai/v1", "m") == {}
 
 
 async def test_cloud_request_carries_the_hosts_own_tweaks(client, upstream, glossary_file, monkeypatch):

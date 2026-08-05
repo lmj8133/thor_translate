@@ -29,15 +29,19 @@ SYSTEM_PROMPT = (
 
 SAMPLING = {"temperature": 0.2}
 
-# Per-host request tweaks that switch hybrid-reasoning models into plain
-# answer mode (measured 2026-08-04: without these, the reasoning burns the
-# whole token budget and the content arrives empty). The chain stays
-# provider-neutral - these are compatibility shims keyed by the one provider
-# whose API needs each field, because providers reject each other's fields
-# with a 400 (Gemini and Groq both do). A new provider quirk is one row.
-REQUEST_TWEAKS: list[tuple[str, dict]] = [
-    ("api.groq.com", {"reasoning_effort": "none"}),
-    ("api.z.ai", {"thinking": {"type": "disabled"}}),
+# Request tweaks that switch hybrid-reasoning models into plain answer mode
+# (measured 2026-08-04/05: without these, the reasoning burns the token
+# budget and the content arrives empty or truncated mid-sentence). The chain
+# stays provider-neutral - these are compatibility shims keyed by the host
+# that needs each field AND a model substring ("" = every model there),
+# because acceptance is inconsistent even within one provider: Gemini's
+# compat layer takes reasoning_effort "minimal" on 3.6-flash but 400s on
+# "none" there, while 3.5-flash-lite rejects the field entirely. A new
+# provider or model quirk is one row.
+REQUEST_TWEAKS: list[tuple[str, str, dict]] = [
+    ("api.groq.com", "", {"reasoning_effort": "none"}),
+    ("api.z.ai", "", {"thinking": {"type": "disabled"}}),
+    ("generativelanguage.googleapis.com", "gemini-3.6-flash", {"reasoning_effort": "minimal"}),
 ]
 
 # Some models leak their reasoning into content as <think>/<thought> blocks
@@ -46,11 +50,11 @@ REQUEST_TWEAKS: list[tuple[str, dict]] = [
 _REASONING_BLOCK = re.compile(r"<(think|thought)>.*?(</\1>|\Z)", re.DOTALL)
 
 
-def request_tweaks(base_url: str) -> dict:
-    """Extra request-body fields this provider needs, {} for everyone else."""
+def request_tweaks(base_url: str, model: str = "") -> dict:
+    """Extra request-body fields this (provider, model) needs, {} otherwise."""
     host = urlsplit(base_url).netloc
-    for suffix, extra in REQUEST_TWEAKS:
-        if host == suffix or host.endswith("." + suffix):
+    for suffix, model_part, extra in REQUEST_TWEAKS:
+        if (host == suffix or host.endswith("." + suffix)) and model_part in model:
             return dict(extra)
     return {}
 
