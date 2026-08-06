@@ -1093,33 +1093,7 @@ _STATUS_PAGE = """<!doctype html>
 <div class="now" id="now"><b>{last_backend}</b><br>{last_seconds:.1f}s · {served} lines served{idle}</div>
 <table id="tbl"><tr><th>Endpoint / model</th><th>State</th></tr>{rows}</table>
 <p class="dim" id="foot">Cache {hits}/{requests} hits · {repeat_misses} repeat misses<br>
-Uptime {uptime} · <span id="r">live</span></p>
-<script>
-// Refresh only while the page is actually being looked at. A meta-refresh
-// would keep waking the CPU (and re-rendering this whole page) every few
-// seconds behind the game, which on a handheld is pure battery burn.
-(function () {{
-  var timer = null;
-  function tick() {{
-    fetch(location.pathname, {{cache: "no-store"}})
-      .then(function (r) {{ return r.text(); }})
-      .then(function (html) {{
-        var doc = new DOMParser().parseFromString(html, "text/html");
-        ["ready", "now", "tbl", "foot"].forEach(function (id) {{
-          var fresh = doc.getElementById(id), cur = document.getElementById(id);
-          if (fresh && cur) cur.innerHTML = fresh.innerHTML;
-        }});
-      }})
-      .catch(function () {{}});
-  }}
-  function start() {{ if (!timer) {{ tick(); timer = setInterval(tick, 5000); }} }}
-  function stop() {{ if (timer) {{ clearInterval(timer); timer = null; }} }}
-  document.addEventListener("visibilitychange", function () {{
-    document.hidden ? stop() : start();
-  }});
-  if (!document.hidden) start();
-}})();
-</script>
+Uptime {uptime} · pull to refresh</p>
 """
 
 
@@ -1172,22 +1146,6 @@ async def status(request: Request) -> Response:
     return Response(page, media_type="text/html; charset=utf-8")
 
 
-async def ready(request: Request) -> Response:
-    """One-word readiness, for a glance that must not lie.
-
-    Separate from /status because that page renders the whole endpoint table
-    on every hit; this returns a constant-size body and answers 503 until a
-    real translation has succeeded, so "green" cannot be stale.
-    """
-    is_ready = _status["ready"].startswith("✅")
-    return Response(
-        _status["ready"] or "Starting…",
-        status_code=200 if is_ready else 503,
-        media_type="text/plain; charset=utf-8",
-        headers={} if is_ready else {"Retry-After": "5"},
-    )
-
-
 async def models(request: Request) -> JSONResponse:
     # Not real auth (the proxy is LAN-only): rejecting keyless probes makes
     # PlayTranslate's key check (which probes with AND without the key, and
@@ -1216,7 +1174,6 @@ app = Starlette(
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
         Route("/v1/models", models, methods=["GET"]),
         Route("/status", status, methods=["GET"]),
-        Route("/ready", ready, methods=["GET"]),
     ],
     lifespan=_lifespan,
 )

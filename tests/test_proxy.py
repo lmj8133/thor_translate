@@ -1566,21 +1566,10 @@ async def test_readiness_probe_rejects_empty_output(monkeypatch, real_probe):
     assert len(fake.payloads) == 2  # m1's reasoning-only reply was rejected
 
 
-async def test_ready_endpoint_is_503_until_verified(client, monkeypatch):
-    monkeypatch.setitem(main._status, "ready", "Waiting for network… — do NOT start the game yet")
-    resp = await client.get("/ready")
-    assert resp.status_code == 503
-    assert resp.headers["retry-after"] == "5"
-    monkeypatch.setitem(main._status, "ready", "✅ Ready — 4 cloud endpoints")
-    resp = await client.get("/ready")
-    assert resp.status_code == 200
-    assert "Ready" in resp.text
-
-
-async def test_status_page_does_not_poll_in_the_background(client, upstream, glossary_file):
-    # A meta-refresh keeps waking the CPU behind the game; the page must only
-    # poll while it is actually visible.
+async def test_status_page_never_polls_on_its_own(client, upstream, glossary_file):
+    # The page must be inert: no meta-refresh and no script, so an open tab
+    # costs nothing behind the game. It updates when the user reloads it.
     body = (await client.get("/status")).text
     assert "http-equiv=\"refresh\"" not in body
-    assert "visibilitychange" in body
-    assert 'id="ready"' in body  # the ids the partial refresh updates
+    assert "<script" not in body
+    assert "setInterval" not in body
